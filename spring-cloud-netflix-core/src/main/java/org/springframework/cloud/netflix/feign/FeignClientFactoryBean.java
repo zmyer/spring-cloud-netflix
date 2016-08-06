@@ -34,6 +34,7 @@ import feign.Feign;
 import feign.Logger;
 import feign.Request;
 import feign.RequestInterceptor;
+import feign.RequestPostProcessor;
 import feign.Retryer;
 import feign.Target.HardCodedTarget;
 import feign.codec.Decoder;
@@ -117,6 +118,11 @@ class FeignClientFactoryBean implements FactoryBean<Object>, InitializingBean,
 				this.name, RequestInterceptor.class);
 		if (requestInterceptors != null) {
 			builder.requestInterceptors(requestInterceptors.values());
+		}
+		Map<String, RequestPostProcessor> requestPostProcessor = context.getInstances(
+				this.name, RequestPostProcessor.class);
+		if (requestInterceptors != null) {
+			builder.requestPostProcessors(requestPostProcessor.values());
 		}
 
 		if (decode404) {
