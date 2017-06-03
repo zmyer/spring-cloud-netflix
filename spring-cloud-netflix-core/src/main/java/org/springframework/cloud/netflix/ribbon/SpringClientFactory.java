@@ -1,5 +1,5 @@
 /*
- * Copyright 2013-2015 the original author or authors.
+ * Copyright 2013-2017 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -15,6 +15,8 @@
  */
 
 package org.springframework.cloud.netflix.ribbon;
+
+import java.lang.reflect.Constructor;
 
 import org.springframework.beans.BeanUtils;
 import org.springframework.cloud.context.named.NamedContextFactory;
@@ -80,33 +82,30 @@ public class SpringClientFactory extends NamedContextFactory<RibbonClientSpecifi
 	static <C> C instantiateWithConfig(AnnotationConfigApplicationContext context,
 										Class<C> clazz, IClientConfig config) {
 		C result = null;
-		if (IClientConfigAware.class.isAssignableFrom(clazz)) {
-			IClientConfigAware obj = (IClientConfigAware) BeanUtils.instantiate(clazz);
-			obj.initWithNiwsConfig(config);
-			@SuppressWarnings("unchecked")
-			C value = (C) obj;
-			result = value;
+		
+		try {
+			Constructor<C> constructor = clazz.getConstructor(IClientConfig.class);
+			result = constructor.newInstance(config);
+		} catch (Throwable e) {
+			// Ignored
 		}
-		else {
-			try {
-				if (clazz.getConstructor(IClientConfig.class) != null) {
-					result = clazz.getConstructor(IClientConfig.class)
-							.newInstance(config);
-				}
-				else {
-					result = BeanUtils.instantiate(clazz);
-				}
+		
+		if (result == null) {
+			result = BeanUtils.instantiate(clazz);
+			
+			if (result instanceof IClientConfigAware) {
+				((IClientConfigAware) result).initWithNiwsConfig(config);
 			}
-			catch (Throwable ex) {
-				// NOPMD
+			
+			if (context != null) {
+				context.getAutowireCapableBeanFactory().autowireBean(result);
 			}
 		}
-		if (context != null) {
-			context.getAutowireCapableBeanFactory().autowireBean(result);
-		}
+		
 		return result;
 	}
 
+	@Override
 	public <C> C getInstance(String name, Class<C> type) {
 		C instance = super.getInstance(name, type);
 		if (instance != null) {
@@ -114,6 +113,11 @@ public class SpringClientFactory extends NamedContextFactory<RibbonClientSpecifi
 		}
 		IClientConfig config = getInstance(name, IClientConfig.class);
 		return instantiateWithConfig(getContext(name), type, config);
+	}
+
+	@Override
+	protected AnnotationConfigApplicationContext getContext(String name) {
+		return super.getContext(name);
 	}
 
 }

@@ -1,5 +1,5 @@
 /*
- * Copyright 2013-2015 the original author or authors.
+ * Copyright 2013-2017 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -22,17 +22,16 @@ import java.util.List;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.actuate.endpoint.Endpoint;
 import org.springframework.boot.actuate.trace.TraceRepository;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnClass;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingClass;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.cloud.client.actuator.HasFeatures;
 import org.springframework.cloud.client.discovery.DiscoveryClient;
 import org.springframework.cloud.client.discovery.event.HeartbeatEvent;
 import org.springframework.cloud.client.discovery.event.HeartbeatMonitor;
 import org.springframework.cloud.client.discovery.event.InstanceRegisteredEvent;
 import org.springframework.cloud.client.discovery.event.ParentHeartbeatEvent;
-import org.springframework.cloud.netflix.ribbon.SpringClientFactory;
 import org.springframework.cloud.netflix.ribbon.support.RibbonRequestCustomizer;
 import org.springframework.cloud.netflix.zuul.filters.ProxyRequestHelper;
 import org.springframework.cloud.netflix.zuul.filters.RouteLocator;
@@ -42,25 +41,29 @@ import org.springframework.cloud.netflix.zuul.filters.discovery.DiscoveryClientR
 import org.springframework.cloud.netflix.zuul.filters.discovery.ServiceRouteMapper;
 import org.springframework.cloud.netflix.zuul.filters.discovery.SimpleServiceRouteMapper;
 import org.springframework.cloud.netflix.zuul.filters.pre.PreDecorationFilter;
-import org.springframework.cloud.netflix.zuul.filters.route.RestClientRibbonCommandFactory;
 import org.springframework.cloud.netflix.zuul.filters.route.RibbonCommandFactory;
 import org.springframework.cloud.netflix.zuul.filters.route.RibbonRoutingFilter;
 import org.springframework.cloud.netflix.zuul.filters.route.SimpleHostRoutingFilter;
-import org.springframework.cloud.netflix.zuul.filters.route.apache.HttpClientRibbonCommandFactory;
-import org.springframework.cloud.netflix.zuul.filters.route.okhttp.OkHttpRibbonCommandFactory;
 import org.springframework.cloud.netflix.zuul.web.ZuulHandlerMapping;
 import org.springframework.context.ApplicationEvent;
 import org.springframework.context.ApplicationListener;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.context.annotation.Import;
 
 /**
  * @author Spencer Gibb
  * @author Dave Syer
+ * @author Biju Kunjummen
  */
 @Configuration
-public class ZuulProxyConfiguration extends ZuulConfiguration {
+@Import({ RibbonCommandFactoryConfiguration.RestClientRibbonConfiguration.class,
+		RibbonCommandFactoryConfiguration.OkHttpRibbonConfiguration.class,
+		RibbonCommandFactoryConfiguration.HttpClientRibbonConfiguration.class })
+@ConditionalOnBean(ZuulProxyMarkerConfiguration.Marker.class)
+public class ZuulProxyAutoConfiguration extends ZuulServerAutoConfiguration {
 
+	@SuppressWarnings("rawtypes")
 	@Autowired(required = false)
 	private List<RibbonRequestCustomizer> requestCustomizers = Collections.emptyList();
 
@@ -72,74 +75,34 @@ public class ZuulProxyConfiguration extends ZuulConfiguration {
 
 	@Override
 	public HasFeatures zuulFeature() {
-		return HasFeatures.namedFeature("Zuul (Discovery)", ZuulProxyConfiguration.class);
+		return HasFeatures.namedFeature("Zuul (Discovery)", ZuulProxyAutoConfiguration.class);
 	}
 
 	@Bean
-	@Override
-	@ConditionalOnMissingBean(RouteLocator.class)
-	public DiscoveryClientRouteLocator routeLocator() {
-		return new DiscoveryClientRouteLocator(this.server.getServletPrefix(),
-				this.discovery, this.zuulProperties, this.serviceRouteMapper);
-	}
-
-	@Configuration
-	@ConditionalOnProperty(name = "zuul.ribbon.httpclient.enabled", matchIfMissing = true)
-	protected static class HttpClientRibbonConfiguration {
-
-		@Bean
-		@ConditionalOnMissingBean
-		public RibbonCommandFactory<?> ribbonCommandFactory(
-				SpringClientFactory clientFactory, ZuulProperties zuulProperties) {
-			return new HttpClientRibbonCommandFactory(clientFactory, zuulProperties);
-		}
-	}
-
-	@Configuration
-	@ConditionalOnProperty("zuul.ribbon.restclient.enabled")
-	protected static class RestClientRibbonConfiguration {
-
-		@Bean
-		@ConditionalOnMissingBean
-		public RibbonCommandFactory<?> ribbonCommandFactory(
-				SpringClientFactory clientFactory, ZuulProperties zuulProperties) {
-			return new RestClientRibbonCommandFactory(clientFactory, zuulProperties);
-		}
-	}
-
-	@Configuration
-	@ConditionalOnProperty("zuul.ribbon.okhttp.enabled")
-	@ConditionalOnClass(name = "okhttp3.OkHttpClient")
-	protected static class OkHttpRibbonConfiguration {
-
-		@Bean
-		@ConditionalOnMissingBean
-		public RibbonCommandFactory<?> ribbonCommandFactory(
-				SpringClientFactory clientFactory, ZuulProperties zuulProperties) {
-			return new OkHttpRibbonCommandFactory(clientFactory, zuulProperties);
-		}
+	@ConditionalOnMissingBean(DiscoveryClientRouteLocator.class)
+	public DiscoveryClientRouteLocator discoveryRouteLocator() {
+		return new DiscoveryClientRouteLocator(this.server.getServletPrefix(), this.discovery, this.zuulProperties,
+				this.serviceRouteMapper);
 	}
 
 	// pre filters
 	@Bean
-	public PreDecorationFilter preDecorationFilter(RouteLocator routeLocator,
-			ProxyRequestHelper proxyRequestHelper) {
-		return new PreDecorationFilter(routeLocator, this.server.getServletPrefix(),
-				this.zuulProperties, proxyRequestHelper);
+	public PreDecorationFilter preDecorationFilter(RouteLocator routeLocator, ProxyRequestHelper proxyRequestHelper) {
+		return new PreDecorationFilter(routeLocator, this.server.getServletPrefix(), this.zuulProperties,
+				proxyRequestHelper);
 	}
 
 	// route filters
 	@Bean
 	public RibbonRoutingFilter ribbonRoutingFilter(ProxyRequestHelper helper,
 			RibbonCommandFactory<?> ribbonCommandFactory) {
-		RibbonRoutingFilter filter = new RibbonRoutingFilter(helper, ribbonCommandFactory,
-				this.requestCustomizers);
+		RibbonRoutingFilter filter = new RibbonRoutingFilter(helper, ribbonCommandFactory, this.requestCustomizers);
 		return filter;
 	}
 
 	@Bean
-	public SimpleHostRoutingFilter simpleHostRoutingFilter(ProxyRequestHelper helper,
-			ZuulProperties zuulProperties) {
+	@ConditionalOnMissingBean(SimpleHostRoutingFilter.class)
+	public SimpleHostRoutingFilter simpleHostRoutingFilter(ProxyRequestHelper helper, ZuulProperties zuulProperties) {
 		return new SimpleHostRoutingFilter(helper, zuulProperties);
 	}
 
@@ -181,6 +144,11 @@ public class ZuulProxyConfiguration extends ZuulConfiguration {
 		}
 
 		@Bean
+		public RoutesMvcEndpoint zuulMvcEndpoint(RouteLocator routeLocator, RoutesEndpoint endpoint) {
+			return new RoutesMvcEndpoint(endpoint, routeLocator);
+		}
+
+		@Bean
 		public ProxyRequestHelper proxyRequestHelper(ZuulProperties zuulProperties) {
 			TraceProxyRequestHelper helper = new TraceProxyRequestHelper();
 			if (this.traces != null) {
@@ -192,8 +160,7 @@ public class ZuulProxyConfiguration extends ZuulConfiguration {
 		}
 	}
 
-	private static class ZuulDiscoveryRefreshListener
-			implements ApplicationListener<ApplicationEvent> {
+	private static class ZuulDiscoveryRefreshListener implements ApplicationListener<ApplicationEvent> {
 
 		private HeartbeatMonitor monitor = new HeartbeatMonitor();
 

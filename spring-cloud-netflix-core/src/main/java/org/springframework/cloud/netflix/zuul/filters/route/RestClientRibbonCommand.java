@@ -17,19 +17,19 @@
 
 package org.springframework.cloud.netflix.zuul.filters.route;
 
-import static org.springframework.cloud.netflix.ribbon.support.RibbonRequestCustomizer.Runner.customize;
-
 import java.io.InputStream;
 import java.net.URI;
 import java.util.List;
-
 import org.springframework.cloud.netflix.zuul.filters.ZuulProperties;
 import org.springframework.cloud.netflix.zuul.filters.route.support.AbstractRibbonCommand;
+import org.springframework.http.HttpMethod;
 import org.springframework.util.MultiValueMap;
-
+import com.netflix.client.config.IClientConfig;
 import com.netflix.client.http.HttpRequest;
 import com.netflix.client.http.HttpResponse;
 import com.netflix.niws.client.http.RestClient;
+
+import static org.springframework.cloud.netflix.ribbon.support.RibbonRequestCustomizer.Runner.customize;
 
 /**
  * Hystrix wrapper around Eureka Ribbon command
@@ -42,6 +42,18 @@ public class RestClientRibbonCommand extends AbstractRibbonCommand<RestClient, H
 	public RestClientRibbonCommand(String commandKey, RestClient client,
 			RibbonCommandContext context, ZuulProperties zuulProperties) {
 		super(commandKey, client, context, zuulProperties);
+	}
+
+	public RestClientRibbonCommand(String commandKey, RestClient client,
+								   RibbonCommandContext context, ZuulProperties zuulProperties,
+								   ZuulFallbackProvider zuulFallbackProvider) {
+		super(commandKey, client, context, zuulProperties, zuulFallbackProvider);
+	}
+
+	public RestClientRibbonCommand(String commandKey, RestClient client,
+								   RibbonCommandContext context, ZuulProperties zuulProperties,
+								   ZuulFallbackProvider zuulFallbackProvider, IClientConfig config) {
+		super(commandKey, client, context, zuulProperties, zuulFallbackProvider, config);
 	}
 
 	@Deprecated
@@ -57,7 +69,7 @@ public class RestClientRibbonCommand extends AbstractRibbonCommand<RestClient, H
 	protected HttpRequest createRequest() throws Exception {
 		final InputStream requestEntity;
 		// ApacheHttpClient4Handler does not support body in delete requests
-		if (getContext().getMethod().equalsIgnoreCase("DELETE")) {
+		if (getContext().getMethod().equalsIgnoreCase(HttpMethod.DELETE.toString())) {
 			requestEntity = null;
 		} else {
 			requestEntity = this.context.getRequestEntity();

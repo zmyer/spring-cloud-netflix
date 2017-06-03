@@ -1,5 +1,5 @@
 /*
- * Copyright 2013-2015 the original author or authors.
+ * Copyright 2013-2017 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,6 +16,15 @@
 
 package org.springframework.cloud.netflix.zuul.filters;
 
+import com.netflix.hystrix.HystrixCommandProperties.ExecutionIsolationStrategy;
+import lombok.AllArgsConstructor;
+import lombok.Data;
+import lombok.NoArgsConstructor;
+import org.springframework.boot.context.properties.ConfigurationProperties;
+import org.springframework.util.ClassUtils;
+import org.springframework.util.StringUtils;
+
+import javax.annotation.PostConstruct;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.LinkedHashMap;
@@ -24,24 +33,15 @@ import java.util.List;
 import java.util.Map;
 import java.util.Map.Entry;
 import java.util.Set;
-
-import javax.annotation.PostConstruct;
-
-import org.springframework.boot.context.properties.ConfigurationProperties;
-import org.springframework.util.ClassUtils;
-import org.springframework.util.StringUtils;
-
-import com.netflix.hystrix.HystrixCommandProperties.ExecutionIsolationStrategy;
-
-import lombok.AllArgsConstructor;
-import lombok.Data;
-import lombok.NoArgsConstructor;
+import java.util.concurrent.TimeUnit;
 
 import static com.netflix.hystrix.HystrixCommandProperties.ExecutionIsolationStrategy.SEMAPHORE;
 
 /**
  * @author Spencer Gibb
  * @author Dave Syer
+ * @author Mathias Düsterhöft
+ * @author Bilal Alp
  */
 @Data
 @ConfigurationProperties("zuul")
@@ -50,7 +50,7 @@ public class ZuulProperties {
 	/**
 	 * Headers that are generally expected to be added by Spring Security, and hence often
 	 * duplicated if the proxy and the backend are secured with Spring. By default they
-	 * are added to the ignored headers if Spring Security is present.
+	 * are added to the ignored headers if Spring Security is present and ignoreSecurityHeaders = true.
 	 */
 	public static final List<String> SECURITY_HEADERS = Arrays.asList("Pragma",
 			"Cache-Control", "X-Frame-Options", "X-Content-Type-Options",
@@ -70,7 +70,7 @@ public class ZuulProperties {
 	 * Flag for whether retry is supported by default (assuming the routes themselves
 	 * support it).
 	 */
-	private Boolean retryable;
+	private Boolean retryable = false;
 
 	/**
 	 * Map of route names to properties.
@@ -100,6 +100,23 @@ public class ZuulProperties {
 	 * requests and drop them from downstream responses).
 	 */
 	private Set<String> ignoredHeaders = new LinkedHashSet<>();
+
+	/**
+	 * Flag to say that SECURITY_HEADERS are added to ignored headers if spring security is on the classpath.
+	 * By setting ignoreSecurityHeaders to false we can switch off this default behaviour. This should be used together with
+	 * disabling the default spring security headers
+	 * see https://docs.spring.io/spring-security/site/docs/current/reference/html/headers.html#default-security-headers
+	 */
+	private boolean ignoreSecurityHeaders = true;
+	
+	/**
+	 * Flag to force the original query string encoding when building the backend URI in
+	 * SimpleHostRoutingFilter. When activated, query string will be built using
+	 * HttpServletRequest getQueryString() method instead of UriTemplate. Note that this
+	 * flag is not used in RibbonRoutingFilter with services found via DiscoveryClient
+	 * (like Eureka).
+	 */
+	private boolean forceOriginalQueryStringEncoding = false;
 
 	/**
 	 * Path to install Zuul as a servlet (not part of Spring MVC). The servlet is more
@@ -148,7 +165,7 @@ public class ZuulProperties {
 		Set<String> ignoredHeaders = new LinkedHashSet<>(this.ignoredHeaders);
 		if (ClassUtils.isPresent(
 				"org.springframework.security.config.annotation.web.WebSecurityConfigurer",
-				null) && Collections.disjoint(ignoredHeaders, SECURITY_HEADERS)) {
+				null) && Collections.disjoint(ignoredHeaders, SECURITY_HEADERS) && ignoreSecurityHeaders) {
 			// Allow Spring Security in the gateway to control these headers
 			ignoredHeaders.addAll(SECURITY_HEADERS);
 		}
@@ -234,6 +251,7 @@ public class ZuulProperties {
 			this.stripPrefix = stripPrefix;
 			this.retryable = retryable;
 			this.sensitiveHeaders = sensitiveHeaders;
+			this.customSensitiveHeaders = sensitiveHeaders != null;
 		}
 
 		public ZuulRoute(String text) {
@@ -310,6 +328,14 @@ public class ZuulProperties {
 		 * The maximum number of connections that can be used by a single route.
 		 */
 		private int maxPerRouteConnections = 20;
+		/**
+		 * The lifetime for the connection pool.
+		 */
+		private long timeToLive = -1;
+		/**
+		 * The time unit for timeToLive.
+		 */
+		private TimeUnit timeUnit = TimeUnit.MILLISECONDS;
 	}
 	
 	@Data

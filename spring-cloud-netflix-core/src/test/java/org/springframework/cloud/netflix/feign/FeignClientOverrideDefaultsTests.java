@@ -108,7 +108,7 @@ public class FeignClientOverrideDefaultsTests {
 
 	@Test
 	public void overrideRetryer() {
-		assertNull(this.context.getInstance("foo", Retryer.class));
+		assertEquals(Retryer.NEVER_RETRY, this.context.getInstance("foo", Retryer.class));
 		Retryer.Default.class.cast(this.context.getInstance("bar", Retryer.class));
 	}
 
@@ -121,8 +121,8 @@ public class FeignClientOverrideDefaultsTests {
 
 	@Test
 	public void overrideBuilder() {
-		Feign.Builder.class.cast(this.context.getInstance("foo", Feign.Builder.class));
-		HystrixFeign.Builder.class
+		HystrixFeign.Builder.class.cast(this.context.getInstance("foo", Feign.Builder.class));
+		Feign.Builder.class
 				.cast(this.context.getInstance("bar", Feign.Builder.class));
 	}
 
@@ -187,7 +187,7 @@ public class FeignClientOverrideDefaultsTests {
 
 		@Bean
 		public Feign.Builder feignBuilder() {
-			return Feign.builder();
+			return HystrixFeign.builder();
 		}
 	}
 

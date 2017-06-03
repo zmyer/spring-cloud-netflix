@@ -26,6 +26,8 @@ import static org.junit.Assert.assertTrue;
 
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collections;
+import java.util.Set;
 import java.util.UUID;
 
 import javax.servlet.http.HttpServletRequest;
@@ -45,13 +47,13 @@ import org.springframework.cloud.netflix.ribbon.RibbonClients;
 import org.springframework.cloud.netflix.ribbon.SpringClientFactory;
 import org.springframework.cloud.netflix.ribbon.StaticServerList;
 import org.springframework.cloud.netflix.zuul.EnableZuulProxy;
-import org.springframework.cloud.netflix.zuul.filters.RouteLocator;
 import org.springframework.cloud.netflix.zuul.filters.ZuulProperties;
 import org.springframework.cloud.netflix.zuul.filters.discovery.DiscoveryClientRouteLocator;
 import org.springframework.cloud.netflix.zuul.filters.route.RestClientRibbonCommand;
 import org.springframework.cloud.netflix.zuul.filters.route.RestClientRibbonCommandFactory;
 import org.springframework.cloud.netflix.zuul.filters.route.RibbonCommandContext;
 import org.springframework.cloud.netflix.zuul.filters.route.RibbonCommandFactory;
+import org.springframework.cloud.netflix.zuul.filters.route.ZuulFallbackProvider;
 import org.springframework.cloud.netflix.zuul.filters.route.support.NoEncodingFormHttpMessageConverter;
 import org.springframework.cloud.netflix.zuul.filters.route.support.ZuulProxyTestBase;
 import org.springframework.context.annotation.Bean;
@@ -88,12 +90,12 @@ import lombok.SneakyThrows;
 		"zuul.routes.another: /another/twolevel/**", "zuul.routes.simple: /simple/**",
 		"zuul.routes.badhost: /badhost/**", "zuul.ignoredHeaders: X-Header",
 		"zuul.routes.rnd: /rnd/**", "rnd.ribbon.listOfServers: ${random.value}",
-		"zuul.removeSemicolonContent: false" })
+		"zuul.removeSemicolonContent: false", "ribbon.restclient.enabled=true"})
 @DirtiesContext
 public class RestClientRibbonCommandIntegrationTests extends ZuulProxyTestBase {
 
 	@Autowired
-	RouteLocator routeLocator;
+	DiscoveryClientRouteLocator routeLocator;
 
 	@Override
 	protected boolean supportsPatch() {
@@ -187,6 +189,17 @@ public class RestClientRibbonCommandIntegrationTests extends ZuulProxyTestBase {
 	}
 
 	@Test
+	public void simpleHostRouteWithColonParamNames() {
+		this.routes.addRoute("/self/**", "http://localhost:" + this.port + "/");
+		this.endpoint.reset();
+		ResponseEntity<String> result = new TestRestTemplate().exchange(
+				"http://localhost:" + this.port + "/self/colonquery?foo:bar={foobar0}&foobar={foobar1}", HttpMethod.GET,
+				new HttpEntity<>((Void) null), String.class, "baz", "bam");
+		assertEquals(HttpStatus.OK, result.getStatusCode());
+		assertEquals("/colonquery?foo:bar=baz&foobar=bam", result.getBody());
+	}
+
+	@Test
 	public void simpleHostRouteWithContentType() {
 		this.routes.addRoute("/self/**", "http://localhost:" + this.port + "/");
 		this.endpoint.reset();
@@ -238,17 +251,17 @@ public class RestClientRibbonCommandIntegrationTests extends ZuulProxyTestBase {
 		assertTrue("ribbonCommandFactory not a MyRibbonCommandFactory",
 				this.ribbonCommandFactory instanceof TestConfig.MyRibbonCommandFactory);
 	}
-	
+
 	@Override
 	@SuppressWarnings("deprecation")
 	@Test
 	public void javascriptEncodedFormParams() {
 		TestRestTemplate testRestTemplate = new TestRestTemplate();
 		ArrayList<HttpMessageConverter<?>> converters = new ArrayList<>();
-		converters.addAll(Arrays.asList(new StringHttpMessageConverter(), 
+		converters.addAll(Arrays.asList(new StringHttpMessageConverter(),
 				new NoEncodingFormHttpMessageConverter()));
 		testRestTemplate.getRestTemplate().setMessageConverters(converters);
-		
+
 		MultiValueMap<String, String> map = new LinkedMultiValueMap<>();
 		map.add("foo", "(bar)");
 		ResponseEntity<String> result = testRestTemplate.postForEntity(
@@ -274,6 +287,9 @@ public class RestClientRibbonCommandIntegrationTests extends ZuulProxyTestBase {
 			@RibbonClient(name = "another", configuration = ZuulProxyTestBase.AnotherRibbonClientConfiguration.class) })
 	static class TestConfig extends ZuulProxyTestBase.AbstractZuulProxyApplication {
 
+		@Autowired(required = false)
+		private Set<ZuulFallbackProvider> fallbackProviders = Collections.emptySet();
+
 		@RequestMapping("/trailing-slash")
 		public String trailingSlash(HttpServletRequest request) {
 			return request.getRequestURI();
@@ -289,14 +305,19 @@ public class RestClientRibbonCommandIntegrationTests extends ZuulProxyTestBase {
 		public ResponseEntity<String> addHeader(HttpServletRequest request) {
 			HttpHeaders headers = new HttpHeaders();
 			headers.set("X-Header", "FOO");
-			ResponseEntity<String> result = new ResponseEntity<String>(
+			ResponseEntity<String> result = new ResponseEntity<>(
 					request.getRequestURI(), headers, HttpStatus.OK);
 			return result;
 		}
 
 		@RequestMapping("/query")
-		public String addQuery(HttpServletRequest request, @RequestParam String foo) {
+		public String query(HttpServletRequest request, @RequestParam String foo) {
 			return request.getRequestURI() + "?foo=" + foo;
+		}
+
+		@RequestMapping("/colonquery")
+		public String colonQuery(HttpServletRequest request, @RequestParam(name = "foo:bar") String foobar0, @RequestParam(name = "foobar") String foobar1) {
+			return request.getRequestURI() + "?foo:bar=" + foobar0 + "&foobar=" + foobar1;
 		}
 
 		@RequestMapping("/matrix/{name}/{another}")
@@ -311,11 +332,12 @@ public class RestClientRibbonCommandIntegrationTests extends ZuulProxyTestBase {
 		@Bean
 		public RibbonCommandFactory<?> ribbonCommandFactory(
 				SpringClientFactory clientFactory) {
-			return new MyRibbonCommandFactory(clientFactory);
+			return new MyRibbonCommandFactory(clientFactory, fallbackProviders);
 		}
 
 		@Bean
-		public RouteLocator routeLocator(DiscoveryClient discoveryClient,
+		public DiscoveryClientRouteLocator discoveryRouteLocator(
+				DiscoveryClient discoveryClient,
 				ZuulProperties zuulProperties) {
 			return new MyRouteLocator("/", discoveryClient, zuulProperties);
 		}
@@ -334,8 +356,9 @@ public class RestClientRibbonCommandIntegrationTests extends ZuulProxyTestBase {
 
 			private SpringClientFactory clientFactory;
 
-			public MyRibbonCommandFactory(SpringClientFactory clientFactory) {
-				super(clientFactory, new ZuulProperties());
+			public MyRibbonCommandFactory(SpringClientFactory clientFactory,
+										  Set<ZuulFallbackProvider> fallbackProviders) {
+				super(clientFactory, new ZuulProperties(), fallbackProviders);
 				this.clientFactory = clientFactory;
 			}
 

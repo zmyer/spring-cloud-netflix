@@ -4,6 +4,7 @@
 :github-code: http://github.com/{github-repo}/tree/{github-tag}
 :all: {asterisk}{asterisk}
 :nofooter:
+:imagesdir: ./images
 = Spring Cloud Netflix
 
 *{spring-cloud-version}*
@@ -203,14 +204,14 @@ Depending on the way the security rules are set up in your Cloudfoundry instance
 
 ==== Using Eureka on AWS
 
-If the application is planned to be deployed to an AWS cloud, then the Eureka instance will have to be configured to be Amazon aware and this can be done by customizing the {github-code}/spring-cloud-netflix-eureka-client/src/main/java/org/springframework/cloud/netflix/eureka/EurekaInstanceConfigBean.java[EurekaInstanceConfigBean] the following way:
+If the application is planned to be deployed to an AWS cloud, then the Eureka instance will have to be configured to be AWS aware and this can be done by customizing the {github-code}/spring-cloud-netflix-eureka-client/src/main/java/org/springframework/cloud/netflix/eureka/EurekaInstanceConfigBean.java[EurekaInstanceConfigBean] the following way:
 
 [source,java,indent=0]
 ----
 @Bean
 @Profile("!default")
-public EurekaInstanceConfigBean eurekaInstanceConfig() {
-  EurekaInstanceConfigBean b = new EurekaInstanceConfigBean();
+public EurekaInstanceConfigBean eurekaInstanceConfig(InetUtils inetUtils) {
+  EurekaInstanceConfigBean b = new EurekaInstanceConfigBean(inetUtils);
   AmazonInfo info = AmazonInfo.Builder.newBuilder().autoBuild("eureka");
   b.setDataCenterInfo(info);
   return b;
@@ -305,6 +306,33 @@ production it's probably better to stick with the default because
 there are some computations internally in the server that make
 assumptions about the lease renewal period.
 
+
+=== Zones
+
+If you have deployed Eureka clients to multiple zones than you may prefer that
+those clients leverage services within the same zone before trying services
+in another zone.  To do this you need to configure your Eureka clients correctly.
+
+First, you need to make sure you have Eureka servers deployed to each zone and that
+they are peers of each other.  See the section on <<spring-cloud-eureka-server-zones-and-regions,zones and regions>> 
+for more information.
+
+Next you need to tell Eureka which zone your service is in.  You can do this using
+the `metadataMap` property.  For example if `service 1` is deployed to both `zone 1`
+and `zone 2` you would need to set the following Eureka properties in `service 1`
+
+*Service 1 in Zone 1*
+```
+eureka.instance.metadataMap.zone = zone1
+eureka.client.preferSameZoneEureka = true
+```
+
+*Service 1 in Zone 2*
+```
+eureka.instance.metadataMap.zone = zone2
+eureka.client.preferSameZoneEureka = true
+```
+
 [[spring-cloud-eureka-server]]
 == Service Discovery: Eureka Server
 
@@ -362,6 +390,7 @@ dependencyManagement {
 ----
 ====
 
+[[spring-cloud-eureka-server-zones-and-regions]]
 === High Availability, Zones and Regions
 
 The Eureka server does not have a backend store, but the service
@@ -576,6 +605,14 @@ One of the main benefits of Hystrix is the set of metrics it gathers about each 
 .Hystrix Dashboard
 image::Hystrix.png[]
 
+== Hystrix Timeouts And Ribbon Clients
+
+When using Hystrix commands that wrap Ribbon clients you want to make sure your Hystrix timeout
+is configured to be longer than the configured Ribbon timeout, including any potential
+retries that might be made.  For example, if your Ribbon connection timeout is one second and
+the Ribbon client might retry the request three times, than your Hystrix timeout should
+be slightly more than three seconds.
+
 
 [[netflix-hystrix-dashboard-starter]]
 === How to Include Hystrix Dashboard
@@ -589,6 +626,16 @@ To run the Hystrix Dashboard annotate your Spring Boot main class with `@EnableH
 === Turbine
 
 Looking at an individual instances Hystrix data is not very useful in terms of the overall health of the system.  https://github.com/Netflix/Turbine[Turbine] is an application that aggregates all of the relevant `/hystrix.stream` endpoints into a combined `/turbine.stream` for use in the Hystrix Dashboard.  Individual instances are located via Eureka.  Running Turbine is as simple as annotating your main class with the `@EnableTurbine` annotation  (e.g. using spring-cloud-starter-turbine to set up the classpath).  All of the documented configuration properties from https://github.com/Netflix/Turbine/wiki/Configuration-(1.x)[the Turbine 1 wiki] apply.  The only difference is that the `turbine.instanceUrlSuffix` does not need the port prepended as this is handled automatically unless `turbine.instanceInsertPort=false`.
+
+NOTE: By default, Turbine looks for the `/hystrix.stream` endpoint on a registered instance by looking up its `homePageUrl` entry in Eureka, then appending `/hystrix.stream` to it. This means that if `spring-boot-actuator` is running on its own port (which is the default), the call to `/hystrix.stream` will fail. 
+To make turbine find the Hystrix stream at the correct port, you need to add `management.port` to the instances' metadata: 
+----
+eureka:
+  instance:
+    metadata-map:
+      management.port: ${management.port:8081}
+----
+
 
 The configuration key `turbine.appConfig` is a list of eureka serviceIds that turbine will use to lookup instances.  The turbine stream is then used in the Hystrix dashboard using a url that looks like: `http://my.turbine.sever:8080/turbine.stream?cluster=<CLUSTERNAME>` (the cluster parameter can be omitted if the name is "default"). The `cluster` parameter must match an entry in `turbine.aggregator.clusterConfig`. Values returned from eureka are uppercase, thus we expect this example to work if there is an app registered with Eureka called "customers":
 
@@ -698,6 +745,7 @@ Spring Cloud Netflix provides the following beans by default for ribbon
 * `ServerList<Server>` ribbonServerList: `ConfigurationBasedServerList`
 * `ServerListFilter<Server>` ribbonServerListFilter: `ZonePreferenceServerListFilter`
 * `ILoadBalancer` ribbonLoadBalancer: `ZoneAwareLoadBalancer`
+* `ServerListUpdater` ribbonServerListUpdater: `PollingServerListUpdater`
 
 Creating a bean of one of those type and placing it in a `@RibbonClient`
 configuration (such as `FooConfiguration` above) allows you to override each
@@ -824,6 +872,21 @@ public class MyClass {
 }
 ----
 
+[[ribbon-child-context-eager-load]]
+=== Caching of Ribbon Configuration
+
+Each Ribbon named client has a corresponding child Application Context that Spring Cloud maintains, this application context is lazily loaded up on the first request to the named client.
+This lazy loading behavior can be changed to instead eagerly load up these child Application contexts at startup by specifying the names of the Ribbon clients.
+
+.application.yml
+----
+ribbon:
+  eager-load:
+    enabled: true
+    clients: client1, client2, client3
+----
+
+
 [[spring-cloud-feign]]
 == Declarative REST Client: Feign
 
@@ -873,10 +936,8 @@ balancer (see <<spring-cloud-ribbon,below for details of Ribbon
 support>>). You can also specify a URL using the `url` attribute
 (absolute value or just a hostname). The name of the bean in the
 application context is the fully qualified name of the interface.
-An alias is also created which is the 'name' attribute plus 'FeignClient'.
-For the example above, `@Qualifier("storesFeignClient")` could be used to
-reference the bean. If you want to change the default `@Qualifier` value,
-this can be done with the `qualifier` value in `@FeignClient`.
+To specify your own alias value you can use the `qualifier` value
+of the `@FeignClient` annotation.
 
 The Ribbon client above will want to discover the physical addresses
 for the "stores" service. If your application is a Eureka client then
@@ -903,7 +964,7 @@ public interface StoreClient {
 
 In this case the client is composed from the components already in `FeignClientsConfiguration` together with any in `FooConfiguration` (where the latter will override the former).
 
-WARNING: The `FooConfiguration` has to be `@Configuration` but take care that it is not in a `@ComponentScan` for the main application context, otherwise it will be used for every `@FeignClient`. If you use `@ComponentScan` (or `@SpringBootApplication`) you need to take steps to avoid it being included (for instance put it in a separate, non-overlapping package, or specify the packages to scan explicitly in the `@ComponentScan`).
+NOTE: `FooConfiguration` does not need to be annotated with `@Configuration`. However, if it is, then take care to exclude it from any `@ComponentScan` that would otherwise include this configuration as it will become the default source for `feign.Decoder`, `feign.Encoder`, `feign.Contract`, etc., when specified. This can be avoided by putting it in a separate, non-overlapping package from any `@ComponentScan` or `@SpringBootApplication`, or it can be explicitly excluded in `@ComponentScan`.
 
 NOTE: The `serviceId` attribute is now deprecated in favor of the `name` attribute.
 
@@ -937,6 +998,7 @@ Spring Cloud Netflix _does not_ provide the following beans by default for feign
 * `ErrorDecoder`
 * `Request.Options`
 * `Collection<RequestInterceptor>`
+* `SetterFactory`
 
 Creating a bean of one of those type and placing it in a `@FeignClient` configuration (such as `FooConfiguration` above) allows you to override each one of the beans described.  Example:
 
@@ -960,12 +1022,69 @@ This replaces the `SpringMvcContract` with `feign.Contract.Default` and adds a `
 
 Default configurations can be specified in the `@EnableFeignClients` attribute `defaultConfiguration` in a similar manner as described above. The difference is that this configuration will apply to _all_ feign clients.
 
+NOTE: If you need to use `ThreadLocal` bound variables in your `RequestInterceptor`s you will need to either set the
+thread isolation strategy for Hystrix to `SEMAPHORE` or disable Hystrix in Feign.
+
+application.yml
+[source,yaml]
+----
+# To disable Hystrix in Feign
+feign:
+  hystrix:
+    enabled: false
+
+# To set thread isolation to SEMAPHORE
+hystrix:
+  command:
+    default:
+      execution:
+        isolation:
+          strategy: SEMAPHORE
+----
+
+=== Creating Feign Clients Manually
+
+In some cases it might be necessary to customize your Feign Clients in a way that is not
+possible using the methods above.  In this case you can create Clients using the
+https://github.com/OpenFeign/feign/#basics[Feign Builder API]. Below is an example
+which creates two Feign Clients with the same interface but configures each one with
+a separate request interceptor.
+
+[source,java,indent=0]
+----
+@Import(FeignClientsConfiguration.class)
+class FooController {
+
+	private FooClient fooClient;
+
+	private FooClient adminClient;
+
+    @Autowired
+	public FooController(
+			Decoder decoder, Encoder encoder, Client client) {
+		this.fooClient = Feign.builder().client(client)
+				.encoder(encoder)
+				.decoder(decoder)
+				.requestInterceptor(new BasicAuthRequestInterceptor("user", "user"))
+				.target(FooClient.class, "http://PROD-SVC");
+		this.adminClient = Feign.builder().client(client)
+				.encoder(encoder)
+				.decoder(decoder)
+				.requestInterceptor(new BasicAuthRequestInterceptor("admin", "admin"))
+				.target(FooClient.class, "http://PROD-SVC");
+    }
+}
+----
+
+NOTE: In the above example `FeignClientsConfiguration.class` is the default configuration
+provided by Spring Cloud Netflix.
+
+NOTE: `PROD-SVC` is the name of the service the Clients will be making requests to.
+
 [[spring-cloud-feign-hystrix]]
 === Feign Hystrix Support
 
-If Hystrix is on the classpath, by default Feign will wrap all methods with a circuit breaker. Returning a `com.netflix.hystrix.HystrixCommand` is also available. This lets you use reactive patterns (with a call to `.toObservable()` or `.observe()` or asynchronous use (with a call to `.queue()`).
-
-To disable Hystrix support for Feign, set `feign.hystrix.enabled=false`.
+If Hystrix is on the classpath and `feign.hystrix.enabled=true`, Feign will wrap all methods with a circuit breaker. Returning a `com.netflix.hystrix.HystrixCommand` is also available. This lets you use reactive patterns (with a call to `.toObservable()` or `.observe()` or asynchronous use (with a call to `.queue()`).
 
 To disable Hystrix support on a per-client basis create a vanilla `Feign.Builder` with the "prototype" scope, e.g.:
 
@@ -981,10 +1100,14 @@ public class FooConfiguration {
 }
 ----
 
+WARNING:  Prior to the Spring Cloud Dalston release, if Hystrix was on the classpath Feign would have wrapped
+all methods in a circuit breaker by default.  This default behavior was changed in Spring Cloud Dalston in
+favor for an opt-in approach.
+
 [[spring-cloud-feign-hystrix-fallback]]
 === Feign Hystrix Fallbacks
 
-Hystrix supports the notion of a fallback: a default code path that is executed when they circuit is open or there is an error. To enable fallbacks for a given `@FeignClient` set the `fallback` attribute to the class name that implements the fallback.
+Hystrix supports the notion of a fallback: a default code path that is executed when they circuit is open or there is an error. To enable fallbacks for a given `@FeignClient` set the `fallback` attribute to the class name that implements the fallback. You also need to declare your implementation as a Spring bean.
 
 [source,java,indent=0]
 ----
@@ -1002,7 +1125,43 @@ static class HystrixClientFallback implements HystrixClient {
 }
 ----
 
+If one needs access to the cause that made the fallback trigger, one can use the `fallbackFactory` attribute inside `@FeignClient`.
+
+[source,java,indent=0]
+----
+@FeignClient(name = "hello", fallbackFactory = HystrixClientFallbackFactory.class)
+protected interface HystrixClient {
+	@RequestMapping(method = RequestMethod.GET, value = "/hello")
+	Hello iFailSometimes();
+}
+
+@Component
+static class HystrixClientFallbackFactory implements FallbackFactory<HystrixClient> {
+	@Override
+	public HystrixClient create(Throwable cause) {
+		return new HystrixClientWithFallBackFactory() {
+			@Override
+			public Hello iFailSometimes() {
+				return new Hello("fallback; reason was: " + cause.getMessage());
+			}
+		};
+	}
+}
+----
+
 WARNING: There is a limitation with the implementation of fallbacks in Feign and how Hystrix fallbacks work. Fallbacks are currently not supported for methods that return `com.netflix.hystrix.HystrixCommand` and `rx.Observable`.
+
+=== Feign and `@Primary`
+
+When using Feign with Hystrix fallbacks, there are multiple beans in the `ApplicationContext` of the same type. This will cause `@Autowired` to not work because there isn't exactly one bean, or one marked as primary. To work around this, Spring Cloud Netflix marks all Feign instances as `@Primary`, so Spring Framework will know which bean to inject. In some cases, this may not be desirable. To turn off this behavior set the `primary` attribute of `@FeignClient` to false.
+
+[source,java,indent=0]
+----
+@FeignClient(name = "hello", primary = false)
+public interface HelloClient {
+	// methods here
+}
+----
 
 [[spring-cloud-feign-inheritance]]
 === Feign Inheritance Support
@@ -1163,7 +1322,8 @@ To enable it, annotate a Spring Boot main class with
 service.  By convention, a service with the ID "users", will
 receive requests from the proxy located at `/users` (with the prefix
 stripped). The proxy uses Ribbon to locate an instance to forward to
-via discovery, and all requests are executed in a hystrix command, so
+via discovery, and all requests are executed in a
+<<hystrix-fallbacks-for-routes, hystrix command>>, so
 failures will show up in Hystrix metrics, and once the circuit is open
 the proxy will not try to contact the service.
 
@@ -1295,6 +1455,9 @@ the service-specific prefix from individual routes, e.g.
       stripPrefix: false
 ----
 
+NOTE:  `zuul.stripPrefix` only applies to the prefix set in `zuul.prefix`.  It does not have any effect on prefixes
+defined within a given route's `path`.
+
 In this example, requests to "/myusers/101" will be forwarded to "/myusers/101" on the "users" service.
 
 The `zuul.routes` entries actually bind to an object of type `ZuulProperties`. If you
@@ -1347,6 +1510,12 @@ file as the ordering will be lost using a properties file. For example:
 If you were to use a properties file, the `legacy` path may end up in front of the `users`
 path rendering the `users` path unreachable.
 
+=== Zuul Http Client
+
+The default HTTP client used by zuul is now backed by the Apache HTTP Client instead of the
+deprecated Ribbon `RestClient`. To use `RestClient` or to use the `okhttp3.OkHttpClient` set
+`ribbon.restclient.enabled=true` or `ribbon.okhttp.enabled=true` respectively.
+
 === Cookies and Sensitive Headers
 
 It's OK to share headers between services in the same system, but you
@@ -1387,12 +1556,30 @@ route, e.g.
       url: https://downstream
 ----
 
-Sensitive headers can also be set globally by setting `zuul.sensitiveHeaders`. If `sensitiveHeaders` is set on a route, this will override the global `sensitiveHeaders` setting.
-
 NOTE: this is the default value for `sensitiveHeaders`, so you don't
 need to set it unless you want it to be different. N.B. this is new in
 Spring Cloud Netflix 1.1 (in 1.0 the user had no control over headers
 and all cookies flow in both directions).
+
+The `sensitiveHeaders` are a blacklist and the default is not empty,
+so to make Zuul send all headers (except the "ignored" ones) you would
+have to explicitly set it to the empty list. This is necessary if you
+want to pass cookie or authorization headers to your back end. Example:
+
+.application.yml
+[source,yaml]
+----
+ zuul:
+  routes:
+    users:
+      path: /myusers/**
+      sensitiveHeaders: 
+      url: https://downstream
+----
+
+Sensitive headers can also be set globally by setting `zuul.sensitiveHeaders`. If `sensitiveHeaders` is set on a route, this will override the global `sensitiveHeaders` setting.
+
+=== Ignored Headers
 
 In addition to the per-route sensitive headers, you can set a global
 value for `zuul.ignoredHeaders` for values that should be discarded
@@ -1402,6 +1589,7 @@ classpath, and otherwise they are initialized to a set of well-known
 "security" headers (e.g. involving caching) as specified by Spring
 Security. The assumption in this case is that the downstream services
 might add these headers too, and we want the values from the proxy.
+To not discard these well known security headers in case Spring Security is on the classpath you can set `zuul.ignoreSecurityHeaders` to `false`. This can be useful if you disabled the HTTP Security response headers in Spring Security and want the values provided by downstream services
 
 === The Routes Endpoint
 
@@ -1409,7 +1597,8 @@ If you are using `@EnableZuulProxy` with tha Spring Boot Actuator you
 will enable (by default) an additional endpoint, available via HTTP as
 `/routes`. A GET to this endpoint will return a list of the mapped
 routes. A POST will force a refresh of the existing routes (e.g. in
-case there have been changes in the service catalog).
+case there have been changes in the service catalog).  You can disable
+this endpoint by setting `endpoints.routes.enabled` to `false`.
 
 NOTE: the routes should respond automatically to changes in the
 service catalog, but the POST to /routes is a way to force the change
@@ -1447,7 +1636,7 @@ Example configuration:
 In this example we are strangling the "legacy" app which is mapped to
 all requests that do not match one of the other patterns. Paths in
 `/first/{all}` have been extracted into a new service with an external
-URL. And paths in `/second/{all}` are forwared so they can be handled
+URL. And paths in `/second/{all}` are forwarded so they can be handled
 locally, e.g. with a normal Spring `@RequestMapping`. Paths in
 `/third/{all}` are also forwarded, but with a different prefix
 (i.e. `/third/foo` is forwarded to `/3rd/foo`).
@@ -1487,6 +1676,26 @@ $ curl -v -H "Transfer-Encoding: chunked" \
     -F "file=@mylarge.iso" localhost:9999/zuul/simple/file
 ----
 
+=== Query String Encoding
+When processing the incoming request, query params are decoded so they can be available for possible modifications in
+Zuul filters. They are then re-encoded when building the backend request in the route filters. The result
+can be different than the original input if it was encoded using Javascript's `encodeURIComponent()` method for example.
+While this causes no issues in most cases, some web servers can be picky with the encoding of complex query string.
+
+To force the original encoding of the query string, it is possible to pass a special flag to `ZuulProperties` so
+that the query string is taken as is with the `HttpServletRequest::getQueryString` method : 
+
+.application.yml
+[source,yaml]
+----
+ zuul:
+  forceOriginalQueryStringEncoding: true
+----
+
+*Note:* This special flag only works with `SimpleHostRoutingFilter` and you loose the ability to easily override
+query parameters with `RequestContext.getCurrentContext().setRequestQueryParams(someOverriddenParameters)` since
+the query string is now fetched directly on the original `HttpServletRequest`.
+
 === Plain Embedded Zuul
 
 You can also run a Zuul server without the proxying, or switch on parts of the proxying platform selectively, if you
@@ -1519,7 +1728,361 @@ possible filters that are enabled.  If you want to disable one, simply set
 `org.springframework.cloud.netflix.zuul.filters.post.SendResponseFilter` set
 `zuul.SendResponseFilter.post.disable=true`.
 
-=== Polyglot support with Sidecar
+[[hystrix-fallbacks-for-routes]]
+=== Providing Hystrix Fallbacks For Routes
+
+When a circuit for a given route in Zuul is tripped you can provide a fallback response
+by creating a bean of type `ZuulFallbackProvider`.  Within this bean you need to specify
+the route ID the fallback is for and provide a `ClientHttpResponse` to return
+as a fallback.  Here is a very simple `ZuulFallbackProvider` implementation.
+
+[source,java]
+----
+class MyFallbackProvider implements ZuulFallbackProvider {
+    @Override
+    public String getRoute() {
+        return "customers";
+    }
+
+    @Override
+    public ClientHttpResponse fallbackResponse() {
+        return new ClientHttpResponse() {
+            @Override
+            public HttpStatus getStatusCode() throws IOException {
+                return HttpStatus.OK;
+            }
+
+            @Override
+            public int getRawStatusCode() throws IOException {
+                return 200;
+            }
+
+            @Override
+            public String getStatusText() throws IOException {
+                return "OK";
+            }
+
+            @Override
+            public void close() {
+
+            }
+
+            @Override
+            public InputStream getBody() throws IOException {
+                return new ByteArrayInputStream("fallback".getBytes());
+            }
+
+            @Override
+            public HttpHeaders getHeaders() {
+                HttpHeaders headers = new HttpHeaders();
+                headers.setContentType(MediaType.APPLICATION_JSON);
+                return headers;
+            }
+        };
+    }
+}
+----
+
+And here is what the route configuration would look like.
+
+[source,yaml]
+----
+zuul:
+  routes:
+    customers: /customers/**
+----
+
+If you would like to provide a default fallback for all routes than you can create a bean of
+type `ZuulFallbackProvider` and have the `getRoute` method return `*` or `null`.
+
+[source,java]
+----
+class MyFallbackProvider implements ZuulFallbackProvider {
+    @Override
+    public String getRoute() {
+        return "*";
+    }
+
+    @Override
+    public ClientHttpResponse fallbackResponse() {
+        return new ClientHttpResponse() {
+            @Override
+            public HttpStatus getStatusCode() throws IOException {
+                return HttpStatus.OK;
+            }
+
+            @Override
+            public int getRawStatusCode() throws IOException {
+                return 200;
+            }
+
+            @Override
+            public String getStatusText() throws IOException {
+                return "OK";
+            }
+
+            @Override
+            public void close() {
+
+            }
+
+            @Override
+            public InputStream getBody() throws IOException {
+                return new ByteArrayInputStream("fallback".getBytes());
+            }
+
+            @Override
+            public HttpHeaders getHeaders() {
+                HttpHeaders headers = new HttpHeaders();
+                headers.setContentType(MediaType.APPLICATION_JSON);
+                return headers;
+            }
+        };
+    }
+}
+----
+
+[[zuul-developer-guide]]
+=== Zuul Developer Guide
+
+For a general overview of how Zuul works, please see https://github.com/Netflix/zuul/wiki/How-it-Works[the Zuul Wiki].
+
+==== The Zuul Servlet
+
+Zuul is implemented as a Servlet. For the general cases, Zuul is embedded into the Spring Dispatch mechanism. This allows Spring MVC to be in control of the routing. In this case, Zuul is configured to buffer requests. If there is a need to go through Zuul without buffering requests (e.g. for large file uploads), the Servlet is also installed outside of the Spring Dispatcher. By default, this is located at `/zuul`. This path can be changed with the `zuul.servlet-path` property.
+
+==== Zuul RequestContext
+
+To pass information between filters, Zuul uses a https://github.com/Netflix/zuul/blob/1.x/zuul-core/src/main/java/com/netflix/zuul/context/RequestContext.java[`RequestContext`]. Its data is held in a `ThreadLocal` specific to each request. Information about where to route requests, errors and the actual `HttpServletRequest` and `HttpServletResponse` are stored there. The `RequestContext` extends `ConcurrentHashMap`, so anything can be stored in the context. https://github.com/spring-cloud/spring-cloud-netflix/blob/master/spring-cloud-netflix-core/src/main/java/org/springframework/cloud/netflix/zuul/filters/support/FilterConstants.java[`FilterConstants`] contains the keys that are used by the filters installed by Spring Cloud Netflix (more on these later).
+
+==== `@EnableZuulProxy` vs. `@EnableZuulServer`
+
+Spring Cloud Netflix installs a number of filters based on which annotation was used to enable Zuul. `@EnableZuulProxy` is a superset of `@EnableZuulServer`. In other words, `@EnableZuulProxy` contains all filters installed by `@EnableZuulServer`. The additional filters in the "proxy" enable routing functionality. If you want a "blank" Zuul, you should use `@EnableZuulServer`.
+
+==== `@EnableZuulServer` Filters
+
+Creates a `SimpleRouteLocator` that loads route definitions from Spring Boot configuration files.
+
+The following filters are installed (as normal Spring Beans):
+
+Pre filters:
+
+- `ServletDetectionFilter`: Detects if the request is through the Spring Dispatcher. Sets boolean with key `FilterConstants.IS_DISPATCHER_SERVLET_REQUEST_KEY`.
+- `FormBodyWrapperFilter`: Parses form data and reencodes it for downstream requests.
+- `DebugFilter`: if the `debug` request parameter is set, this filter sets `RequestContext.setDebugRouting()` and `RequestContext.setDebugRequest()` to true.
+
+Route filters:
+
+- `SendForwardFilter`: This filter forwards requests using the Servlet `RequestDispatcher`. The forwarding location is stored in the `RequestContext` attribute `FilterConstants.FORWARD_TO_KEY`. This is useful for forwarding to endpoints in the current application.
+
+Post filters:
+
+- `SendResponseFilter`: Writes responses from proxied requests to the current response.
+
+Error filters:
+
+- `SendErrorFilter`: Forwards to /error (by default) if `RequestContext.getThrowable()` is not null. The default forwarding path (`/error`) can be changed by setting the `error.path` property.
+
+==== `@EnableZuulProxy` Filters
+
+Creates a `DiscoveryClientRouteLocator` that loads route definitions from a `DiscoveryClient` (like Eureka), as well as from properties. A route is created for each `serviceId` from the `DiscoveryClient`. As new services are added, the routes will be refreshed.
+
+In addition to the filters described above, the following filters are installed (as normal Spring Beans):
+
+Pre filters:
+
+- `PreDecorationFilter`: This filter determines where and how to route based on the supplied `RouteLocator`. It also sets various proxy-related headers for downstream requests.
+
+Route filters:
+
+* `RibbonRoutingFilter`: This filter uses Ribbon, Hystrix and pluggable HTTP clients to send requests. Service ids are found in the `RequestContext` attribute `FilterConstants.SERVICE_ID_KEY`. This filter can use different HTTP clients. They are:
+** Apache `HttpClient`. This is the default client.
+** Squareup `OkHttpClient` v3. This is enabled by having the `com.squareup.okhttp3:okhttp` library on the classpath and setting `ribbon.okhttp.enabled=true`.
+** Netflix Ribbon HTTP client. This is enabled by setting `ribbon.restclient.enabled=true`. This client has limitations, such as it doesn't support the PATCH method, but also has built-in retry.
+
+* `SimpleHostRoutingFilter`: This filter sends requests to predetermined URLs via an Apache HttpClient. URLs are found in `RequestContext.getRouteHost()`.
+
+==== Custom Zuul Filter examples
+
+Most of the following "How to Write" examples below are included https://github.com/spring-cloud-samples/sample-zuul-filters[Sample Zuul Filters] project. There are also examples of manipulating the request or response body in that repository.
+
+==== How to Write a Pre Filter
+
+Pre filters are used to set up data in the `RequestContext` for use in filters downstream. The main use case is to set information required for route filters.
+
+[source,java]
+----
+public class QueryParamPreFilter extends ZuulFilter {
+	@Override
+	public int filterOrder() {
+		return PRE_DECORATION_FILTER_ORDER - 1; // run before PreDecoration
+	}
+
+	@Override
+	public String filterType() {
+		return PRE_TYPE;
+	}
+
+	@Override
+	public boolean shouldFilter() {
+		RequestContext ctx = RequestContext.getCurrentContext();
+		return !ctx.containsKey(FORWARD_TO_KEY) // a filter has already forwarded
+				&& !ctx.containsKey(SERVICE_ID_KEY); // a filter has already determined serviceId
+	}
+    @Override
+    public Object run() {
+        RequestContext ctx = RequestContext.getCurrentContext();
+		HttpServletRequest request = ctx.getRequest();
+		if (request.getParameter("foo") != null) {
+		    // put the serviceId in `RequestContext`
+    		ctx.put(SERVICE_ID_KEY, request.getParameter("foo"));
+    	}
+        return null;
+    }
+}
+----
+
+The filter above populates `SERVICE_ID_KEY` from the `foo` request parameter. In reality, it's not a good idea to do that kind of direct mapping, but the service id should be looked up from the value of `foo` instead.
+
+Now that `SERVICE_ID_KEY` is populated, `PreDecorationFilter` won't run and `RibbonRoutingFilter` will. If you wanted to route to a full URL instead, call `ctx.setRouteHost(url)` instead.
+
+To modify the path that routing filters will forward to, set the `REQUEST_URI_KEY`.
+
+==== How to Write a Route Filter
+
+Route filters are run after pre filters and are used to make requests to other services. Much of the work here is to translate request and response data to and from the client required model.
+
+[source,java]
+----
+public class OkHttpRoutingFilter extends ZuulFilter {
+	@Autowired
+	private ProxyRequestHelper helper;
+
+	@Override
+	public String filterType() {
+		return ROUTE_TYPE;
+	}
+
+	@Override
+	public int filterOrder() {
+		return SIMPLE_HOST_ROUTING_FILTER_ORDER - 1;
+	}
+
+	@Override
+	public boolean shouldFilter() {
+		return RequestContext.getCurrentContext().getRouteHost() != null
+				&& RequestContext.getCurrentContext().sendZuulResponse();
+	}
+
+    @Override
+    public Object run() {
+		OkHttpClient httpClient = new OkHttpClient.Builder()
+				// customize
+				.build();
+
+		RequestContext context = RequestContext.getCurrentContext();
+		HttpServletRequest request = context.getRequest();
+
+		String method = request.getMethod();
+
+		String uri = this.helper.buildZuulRequestURI(request);
+
+		Headers.Builder headers = new Headers.Builder();
+		Enumeration<String> headerNames = request.getHeaderNames();
+		while (headerNames.hasMoreElements()) {
+			String name = headerNames.nextElement();
+			Enumeration<String> values = request.getHeaders(name);
+
+			while (values.hasMoreElements()) {
+				String value = values.nextElement();
+				headers.add(name, value);
+			}
+		}
+
+		InputStream inputStream = request.getInputStream();
+
+		RequestBody requestBody = null;
+		if (inputStream != null && HttpMethod.permitsRequestBody(method)) {
+			MediaType mediaType = null;
+			if (headers.get("Content-Type") != null) {
+				mediaType = MediaType.parse(headers.get("Content-Type"));
+			}
+			requestBody = RequestBody.create(mediaType, StreamUtils.copyToByteArray(inputStream));
+		}
+
+		Request.Builder builder = new Request.Builder()
+				.headers(headers.build())
+				.url(uri)
+				.method(method, requestBody);
+
+		Response response = httpClient.newCall(builder.build()).execute();
+
+		LinkedMultiValueMap<String, String> responseHeaders = new LinkedMultiValueMap<>();
+
+		for (Map.Entry<String, List<String>> entry : response.headers().toMultimap().entrySet()) {
+			responseHeaders.put(entry.getKey(), entry.getValue());
+		}
+
+		this.helper.setResponse(response.code(), response.body().byteStream(),
+				responseHeaders);
+		context.setRouteHost(null); // prevent SimpleHostRoutingFilter from running
+		return null;
+    }
+}
+----
+
+The above filter translates Servlet request information into OkHttp3 request information, executes an HTTP request, then translates OkHttp3 reponse information to the Servlet response. WARNING: this filter might have bugs and not function correctly.
+
+==== How to Write a Post Filter
+
+Post filters typically manipulate the response. In the filter below, we add a random `UUID` as the `X-Foo` header. Other manipulations, such as transforming the response body, are much more complex and compute-intensive.
+
+[source,java]
+----
+public class AddResponseHeaderFilter extends ZuulFilter {
+	@Override
+	public String filterType() {
+		return POST_TYPE;
+	}
+
+	@Override
+	public int filterOrder() {
+		return SEND_RESPONSE_FILTER_ORDER - 1;
+	}
+
+	@Override
+	public boolean shouldFilter() {
+		return true;
+	}
+
+	@Override
+	public Object run() {
+		RequestContext context = RequestContext.getCurrentContext();
+    	HttpServletResponse servletResponse = context.getResponse();
+		servletResponse.addHeader("X-Foo", UUID.randomUUID().toString());
+		return null;
+	}
+}
+----
+
+==== How Zuul Errors Work
+
+If an exception is thrown during any portion of the Zuul filter lifecycle, the error filters are executed. The `SendErrorFilter` is only run if `RequestContext.getThrowable()` is not `null`. It then sets specific `javax.servlet.error.*` attributes in the request and forwards the request to the Spring Boot error page.
+
+==== Zuul Eager Application Context Loading
+
+Zuul internally uses Ribbon for calling the remote url's and Ribbon clients are by default lazily loaded up by Spring Cloud on first call.
+This behavior can be changed for Zuul using the following configuration and will result in the child Ribbon related Application contexts being eagerly loaded up at application startup time.
+
+.application.yml
+----
+zuul:
+  ribbon:
+    eager-load:
+      enabled: true
+----
+
+== Polyglot support with Sidecar
 
 Do you have non-jvm languages you want to take advantage of Eureka, Ribbon and
 Config Server?  The Spring Cloud Netflix Sidecar was inspired by
@@ -1622,7 +2185,7 @@ info:
 
 [[netflix-rxjava-springmvc]]
 == RxJava with Spring MVC
-Spring Cloud Netflix includes the https://github.com/ReactiveX/RxJava[RxJava].
+Spring Cloud Netflix includes https://github.com/ReactiveX/RxJava[RxJava].
 
 > RxJava is a Java VM implementation of http://reactivex.io/[Reactive Extensions]: a library for composing asynchronous and event-based programs by using observable sequences.
 
@@ -1712,6 +2275,18 @@ If Spring AOP is enabled and `org.aspectj:aspectjweaver` is present on your runt
 3. URI, sanitized for Atlas
 4. Client name
 
+WARNING: Avoid using hardcoded url parameters within `RestTemplate`.  When targeting dynamic endpoints use URL variables. This will avoid potential "GC Overhead Limit Reached" issues where `ServoMonitorCache` treats each url as a unique key.
+
+[source,java,indent=0]
+----
+// recommended
+String orderid = "1";
+restTemplate.getForObject("http://testeurekabrixtonclient/orders/{orderid}", String.class, orderid)
+
+// avoid
+restTemplate.getForObject("http://testeurekabrixtonclient/orders/1", String.class)
+----
+
 [[netflix-metrics-spectator]]
 === Metrics Collection: Spectator
 
@@ -1748,7 +2323,7 @@ The counter records a single time-normalized statistic.
 A timer is used to measure how long some event is taking. Spring Cloud automatically records timers for Spring MVC requests and conditionally `RestTemplate` requests, which can later be used to create dashboards for request related metrics like latency:
 
 .Request Latency
-image::RequestLatency.png []
+image::RequestLatency.png[]
 
 [source,java]
 ----
@@ -1866,3 +2441,44 @@ TIP: After executing several requests against your service, you can gather some 
 The Atlas wiki contains a link:https://github.com/Netflix/atlas/wiki/Single-Line[compilation of sample queries] for various scenarios.
 
 Make sure to check out the link:https://github.com/Netflix/atlas/wiki/Alerting-Philosophy[alerting philosophy] and docs on using link:https://github.com/Netflix/atlas/wiki/DES[double exponential smoothing] to generate dynamic alert thresholds.
+
+[[retrying-failed-requests]]
+=== Retrying Failed Requests
+
+Spring Cloud Netflix offers a variety of ways to make HTTP requests.  You can use a load balanced
+`RestTemplate`, Ribbon, or Feign.  No matter how you choose to your HTTP requests, there is always
+a chance the request may fail.  When a request fails you may want to have the request retried
+automatically.  To accomplish this when using Sping Cloud Netflix you need to include
+https://github.com/spring-projects/spring-retry[Spring Retry] on your application's classpath.
+When Spring Retry is present load balanced `RestTemplates`, Feign, and Zuul will automatically
+retry any failed requests (assuming you configuration allows it to).
+
+==== Configuration
+
+Anytime Ribbon is used with Spring Retry you can control the retry functionality by configuring
+certain Ribbon properties.  The properties you can use are
+`client.ribbon.MaxAutoRetries`, `client.ribbon.MaxAutoRetriesNextServer`, and
+`client.ribbon.OkToRetryOnAllOperations`. See the https://github.com/Netflix/ribbon/wiki/Getting-Started#the-properties-file-sample-clientproperties[Ribbon documentation]
+for a description of what there properties do.
+
+In addition you may want to retry requests when certain status codes are returned in the
+response.  You can list the response codes you would like the Ribbon client to retry using the
+ property `clientName.ribbon.retryableStatusCodes`.  For example
+
+[source,yaml]
+----
+clientName:
+  ribbon:
+    retryableStatusCodes: 404,502
+----
+
+You can also create a bean of type `LoadBalancedRetryPolicy` and implement the `retryableStatusCode`
+method to determine whether you want to retry a request given the status code.
+
+
+
+==== Zuul
+
+You can turn off Zuul's retry functionality by setting `zuul.retryable` to `false`.  You
+can also disable retry functionality on route by route basis by setting
+`zuul.routes.routename.retryable` to `false`.

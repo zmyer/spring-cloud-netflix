@@ -24,8 +24,11 @@ import java.util.Map;
 import javax.servlet.http.HttpServletRequest;
 import javax.servlet.http.HttpServletResponse;
 
+import org.apache.commons.logging.Log;
+import org.apache.commons.logging.LogFactory;
 import org.springframework.cloud.netflix.ribbon.support.RibbonRequestCustomizer;
 import org.springframework.cloud.netflix.zuul.filters.ProxyRequestHelper;
+import org.springframework.cloud.netflix.zuul.util.ZuulRuntimeException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.client.ClientHttpResponse;
 import org.springframework.util.MultiValueMap;
@@ -36,22 +39,41 @@ import com.netflix.zuul.ZuulFilter;
 import com.netflix.zuul.context.RequestContext;
 import com.netflix.zuul.exception.ZuulException;
 
-import lombok.extern.apachecommons.CommonsLog;
+import static org.springframework.cloud.netflix.zuul.filters.support.FilterConstants.REQUEST_ENTITY_KEY;
+import static org.springframework.cloud.netflix.zuul.filters.support.FilterConstants.RETRYABLE_KEY;
+import static org.springframework.cloud.netflix.zuul.filters.support.FilterConstants.RIBBON_ROUTING_FILTER_ORDER;
+import static org.springframework.cloud.netflix.zuul.filters.support.FilterConstants.ROUTE_TYPE;
+import static org.springframework.cloud.netflix.zuul.filters.support.FilterConstants.SERVICE_ID_KEY;
 
-@CommonsLog
+/**
+ * Route {@link ZuulFilter} that uses Ribbon, Hystrix and pluggable http clients to send requests.
+ * ServiceIds are found in the {@link RequestContext} attribute {@link org.springframework.cloud.netflix.zuul.filters.support.FilterConstants#SERVICE_ID_KEY}.
+ *
+ * @author Spencer Gibb
+ * @author Dave Syer
+ * @author Ryan Baxter
+ */
 public class RibbonRoutingFilter extends ZuulFilter {
 
-	private static final String ERROR_STATUS_CODE = "error.status_code";
+	private static final Log log = LogFactory.getLog(RibbonRoutingFilter.class);
+
 	protected ProxyRequestHelper helper;
 	protected RibbonCommandFactory<?> ribbonCommandFactory;
 	protected List<RibbonRequestCustomizer> requestCustomizers;
+	private boolean useServlet31 = true;
 
 	public RibbonRoutingFilter(ProxyRequestHelper helper,
-			RibbonCommandFactory<?> ribbonCommandFactory,
-			List<RibbonRequestCustomizer> requestCustomizers) {
+							   RibbonCommandFactory<?> ribbonCommandFactory,
+							   List<RibbonRequestCustomizer> requestCustomizers) {
 		this.helper = helper;
 		this.ribbonCommandFactory = ribbonCommandFactory;
 		this.requestCustomizers = requestCustomizers;
+		// To support Servlet API 3.1 we need to check if getContentLengthLong exists
+		try {
+			HttpServletRequest.class.getMethod("getContentLengthLong");
+		} catch(NoSuchMethodException e) {
+			useServlet31 = false;
+		}
 	}
 
 	public RibbonRoutingFilter(RibbonCommandFactory<?> ribbonCommandFactory) {
@@ -60,18 +82,18 @@ public class RibbonRoutingFilter extends ZuulFilter {
 
 	@Override
 	public String filterType() {
-		return "route";
+		return ROUTE_TYPE;
 	}
 
 	@Override
 	public int filterOrder() {
-		return 10;
+		return RIBBON_ROUTING_FILTER_ORDER;
 	}
 
 	@Override
 	public boolean shouldFilter() {
 		RequestContext ctx = RequestContext.getCurrentContext();
-		return (ctx.getRouteHost() == null && ctx.get("serviceId") != null
+		return (ctx.getRouteHost() == null && ctx.get(SERVICE_ID_KEY) != null
 				&& ctx.sendZuulResponse());
 	}
 
@@ -86,16 +108,11 @@ public class RibbonRoutingFilter extends ZuulFilter {
 			return response;
 		}
 		catch (ZuulException ex) {
-			context.set(ERROR_STATUS_CODE, ex.nStatusCode);
-			context.set("error.message", ex.errorCause);
-			context.set("error.exception", ex);
+			throw new ZuulRuntimeException(ex);
 		}
 		catch (Exception ex) {
-			context.set("error.status_code",
-					HttpServletResponse.SC_INTERNAL_SERVER_ERROR);
-			context.set("error.exception", ex);
+			throw new ZuulRuntimeException(ex);
 		}
-		return null;
 	}
 
 	protected RibbonCommandContext buildCommandContext(RequestContext context) {
@@ -107,20 +124,22 @@ public class RibbonRoutingFilter extends ZuulFilter {
 				.buildZuulRequestQueryParams(request);
 		String verb = getVerb(request);
 		InputStream requestEntity = getRequestBody(request);
-		if (request.getContentLength() < 0) {
+		if (request.getContentLength() < 0 && !verb.equalsIgnoreCase("GET")) {
 			context.setChunkedRequestBody();
 		}
 
-		String serviceId = (String) context.get("serviceId");
-		Boolean retryable = (Boolean) context.get("retryable");
+		String serviceId = (String) context.get(SERVICE_ID_KEY);
+		Boolean retryable = (Boolean) context.get(RETRYABLE_KEY);
 
 		String uri = this.helper.buildZuulRequestURI(request);
 
 		// remove double slashes
 		uri = uri.replace("//", "/");
 
+		long contentLength = useServlet31 ? request.getContentLengthLong(): request.getContentLength();
+
 		return new RibbonCommandContext(serviceId, verb, uri, retryable, headers, params,
-				requestEntity, this.requestCustomizers, request.getContentLengthLong());
+				requestEntity, this.requestCustomizers, contentLength);
 	}
 
 	protected ClientHttpResponse forward(RibbonCommandContext context) throws Exception {
@@ -178,7 +197,7 @@ public class RibbonRoutingFilter extends ZuulFilter {
 		InputStream requestEntity = null;
 		try {
 			requestEntity = (InputStream) RequestContext.getCurrentContext()
-					.get("requestEntity");
+					.get(REQUEST_ENTITY_KEY);
 			if (requestEntity == null) {
 				requestEntity = request.getInputStream();
 			}
@@ -199,6 +218,7 @@ public class RibbonRoutingFilter extends ZuulFilter {
 
 	protected void setResponse(ClientHttpResponse resp)
 			throws ClientException, IOException {
+		RequestContext.getCurrentContext().set("zuulResponse", resp);
 		this.helper.setResponse(resp.getStatusCode().value(),
 				resp.getBody() == null ? null : resp.getBody(), resp.getHeaders());
 	}

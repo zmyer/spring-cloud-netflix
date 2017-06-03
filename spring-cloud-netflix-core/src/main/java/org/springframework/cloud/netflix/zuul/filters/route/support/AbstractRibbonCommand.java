@@ -21,10 +21,11 @@ import org.springframework.cloud.netflix.ribbon.RibbonHttpResponse;
 import org.springframework.cloud.netflix.zuul.filters.ZuulProperties;
 import org.springframework.cloud.netflix.zuul.filters.route.RibbonCommand;
 import org.springframework.cloud.netflix.zuul.filters.route.RibbonCommandContext;
+import org.springframework.cloud.netflix.zuul.filters.route.ZuulFallbackProvider;
 import org.springframework.http.client.ClientHttpResponse;
-
 import com.netflix.client.AbstractLoadBalancerAwareClient;
 import com.netflix.client.ClientRequest;
+import com.netflix.client.config.IClientConfig;
 import com.netflix.client.http.HttpResponse;
 import com.netflix.config.DynamicIntProperty;
 import com.netflix.config.DynamicPropertyFactory;
@@ -44,6 +45,8 @@ public abstract class AbstractRibbonCommand<LBC extends AbstractLoadBalancerAwar
 
 	protected final LBC client;
 	protected RibbonCommandContext context;
+	protected ZuulFallbackProvider zuulFallbackProvider;
+	protected IClientConfig config;
 
 	public AbstractRibbonCommand(LBC client, RibbonCommandContext context,
 			ZuulProperties zuulProperties) {
@@ -52,9 +55,23 @@ public abstract class AbstractRibbonCommand<LBC extends AbstractLoadBalancerAwar
 
 	public AbstractRibbonCommand(String commandKey, LBC client,
 			RibbonCommandContext context, ZuulProperties zuulProperties) {
+		this(commandKey, client, context, zuulProperties, null);
+	}
+
+	public AbstractRibbonCommand(String commandKey, LBC client,
+								 RibbonCommandContext context, ZuulProperties zuulProperties,
+								 ZuulFallbackProvider fallbackProvider) {
+		this(commandKey, client, context, zuulProperties, fallbackProvider, null);
+	}
+
+	public AbstractRibbonCommand(String commandKey, LBC client,
+								 RibbonCommandContext context, ZuulProperties zuulProperties,
+								 ZuulFallbackProvider fallbackProvider, IClientConfig config) {
 		super(getSetter(commandKey, zuulProperties));
 		this.client = client;
 		this.context = context;
+		this.zuulFallbackProvider = fallbackProvider;
+		this.config = config;
 	}
 
 	protected static Setter getSetter(final String commandKey,
@@ -68,7 +85,7 @@ public abstract class AbstractRibbonCommand<LBC extends AbstractLoadBalancerAwar
 			// we want to default to semaphore-isolation since this wraps
 			// 2 others commands that are already thread isolated
 			final DynamicIntProperty value = DynamicPropertyFactory.getInstance()
-					.getIntProperty(name, 100);
+					.getIntProperty(name, zuulProperties.getSemaphore().getMaxSemaphores());
 			setter.withExecutionIsolationSemaphoreMaxConcurrentRequests(value.get());
 		} else	{
 			// TODO Find out is some parameters can be set here
@@ -85,7 +102,7 @@ public abstract class AbstractRibbonCommand<LBC extends AbstractLoadBalancerAwar
 		final RequestContext context = RequestContext.getCurrentContext();
 
 		RQ request = createRequest();
-		RS response = this.client.executeWithLoadBalancer(request);
+		RS response = this.client.executeWithLoadBalancer(request, config);
 
 		context.set("ribbonResponse", response);
 
@@ -99,6 +116,14 @@ public abstract class AbstractRibbonCommand<LBC extends AbstractLoadBalancerAwar
 		}
 
 		return new RibbonHttpResponse(response);
+	}
+
+	@Override
+	protected ClientHttpResponse getFallback() {
+		if(zuulFallbackProvider != null) {
+			return zuulFallbackProvider.fallbackResponse();
+		}
+		return super.getFallback();
 	}
 
 	public LBC getClient() {

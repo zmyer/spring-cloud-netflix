@@ -14,14 +14,15 @@
 package org.springframework.cloud.netflix.metrics;
 
 import java.util.ArrayList;
+import java.util.Collection;
 
-import com.netflix.servo.MonitorRegistry;
+import javax.servlet.http.HttpServletRequest;
+
 import org.aspectj.lang.JoinPoint;
 import org.springframework.beans.BeansException;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.beans.factory.config.BeanPostProcessor;
 import org.springframework.boot.actuate.metrics.reader.MetricReader;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnClass;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnWebApplication;
@@ -35,9 +36,8 @@ import org.springframework.web.client.RestTemplate;
 import org.springframework.web.servlet.config.annotation.InterceptorRegistry;
 import org.springframework.web.servlet.config.annotation.WebMvcConfigurerAdapter;
 
+import com.netflix.servo.MonitorRegistry;
 import com.netflix.servo.monitor.Monitors;
-
-import java.util.Collection;
 
 /**
  * @author Jon Schneider
@@ -49,6 +49,7 @@ public class MetricsInterceptorConfiguration {
 
 	@Configuration
 	@ConditionalOnWebApplication
+	@ConditionalOnClass(WebMvcConfigurerAdapter.class)
 	static class MetricsWebResourceConfiguration extends WebMvcConfigurerAdapter {
 		@Bean
 		MetricsHandlerInterceptor servoMonitoringWebResourceInterceptor() {
@@ -62,9 +63,8 @@ public class MetricsInterceptorConfiguration {
 	}
 
 	@Configuration
-	@ConditionalOnClass(JoinPoint.class)
+	@ConditionalOnClass({ RestTemplate.class, JoinPoint.class })
 	@ConditionalOnProperty(value = "spring.aop.enabled", havingValue = "true", matchIfMissing = true)
-	@ConditionalOnBean({ RestTemplate.class })
 	static class MetricsRestTemplateAspectConfiguration {
 
 		@Bean
@@ -75,8 +75,7 @@ public class MetricsInterceptorConfiguration {
 	}
 
 	@Configuration
-	@ConditionalOnBean({ RestTemplate.class })
-	@ConditionalOnClass(name = "javax.servlet.http.HttpServletRequest")
+	@ConditionalOnClass({ RestTemplate.class, HttpServletRequest.class })	// HttpServletRequest implicitly required by MetricsTagProvider
 	static class MetricsRestTemplateConfiguration {
 
 		@Value("${netflix.metrics.restClient.metricName:restclient}")
@@ -84,9 +83,9 @@ public class MetricsInterceptorConfiguration {
 
 		@Bean
 		MetricsClientHttpRequestInterceptor spectatorLoggingClientHttpRequestInterceptor(
-				MonitorRegistry registry, Collection<MetricsTagProvider> tagProviders,
+				Collection<MetricsTagProvider> tagProviders,
 				ServoMonitorCache servoMonitorCache) {
-			return new MetricsClientHttpRequestInterceptor(registry, tagProviders,
+			return new MetricsClientHttpRequestInterceptor(tagProviders,
 					servoMonitorCache, this.metricName);
 		}
 

@@ -16,10 +16,14 @@
 
 package org.springframework.cloud.netflix.sidecar;
 
+import static org.springframework.cloud.commons.util.IdUtils.getDefaultInstanceId;
+
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.boot.autoconfigure.AutoConfigureAfter;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnClass;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
+import org.springframework.boot.bind.RelaxedPropertyResolver;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.cloud.client.actuator.HasFeatures;
 import org.springframework.cloud.commons.util.InetUtils;
@@ -32,10 +36,25 @@ import org.springframework.util.StringUtils;
 import com.netflix.appinfo.HealthCheckHandler;
 import com.netflix.discovery.EurekaClientConfig;
 
-import static org.springframework.cloud.commons.util.IdUtils.getDefaultInstanceId;
+import java.net.InetAddress;
+import java.net.UnknownHostException;
 
 /**
+ * Sidecar Configuration that setting up {@link com.netflix.appinfo.EurekaInstanceConfig}.
+ * <p>
+ * Depends on {@link SidecarProperties} and {@code eureka.instance.hostname} property. Since there is two way to
+ * configure hostname:
+ * <ol>
+ *   <li>{@code eureka.instance.hostname} property</li>
+ *   <li>{@link SidecarProperties#hostname}</li>
+ * </ol>
+ * {@code eureka.instance.hostname} will always win against {@link SidecarProperties#hostname} due to
+ * {@code @ConfigurationProperties("eureka.instance")} on {@link EurekaInstanceConfigBeanConfiguration}.
+ *
  * @author Spencer Gibb
+ * @author Ryan Baxter
+ *
+ * @see EurekaInstanceConfigBeanConfiguration
  */
 @Configuration
 @EnableConfigurationProperties
@@ -73,11 +92,26 @@ public class SidecarConfiguration {
 		@Bean
 		public EurekaInstanceConfigBean eurekaInstanceConfigBean() {
 			EurekaInstanceConfigBean config = new EurekaInstanceConfigBean(inetUtils);
+			RelaxedPropertyResolver springPropertyResolver = new RelaxedPropertyResolver(env, "spring.application.");
+			String springAppName = springPropertyResolver.getProperty("name");
 			int port = this.sidecarProperties.getPort();
 			config.setNonSecurePort(port);
 			config.setInstanceId(getDefaultInstanceId(this.env));
-			if (StringUtils.hasText(this.hostname)) {
-				config.setHostname(this.hostname);
+			if (StringUtils.hasText(springAppName)) {
+				config.setAppname(springAppName);
+				config.setVirtualHostName(springAppName);
+				config.setSecureVirtualHostName(springAppName);
+			}
+			String hostname = this.sidecarProperties.getHostname();
+			String ipAddress = this.sidecarProperties.getIpAddress();
+			if (!StringUtils.hasText(hostname) && StringUtils.hasText(this.hostname)) {
+				hostname = this.hostname;
+			}
+			if (StringUtils.hasText(hostname)) {
+				config.setHostname(hostname);
+			}
+			if (StringUtils.hasText(ipAddress)) {
+				config.setIpAddress(ipAddress);
 			}
 			String scheme = config.getSecurePortEnabled() ? "https" : "http";
 			config.setStatusPageUrl(scheme + "://" + config.getHostname() + ":"

@@ -26,6 +26,7 @@ import java.util.concurrent.atomic.AtomicReference;
 
 import org.springframework.cloud.netflix.zuul.filters.ZuulProperties.ZuulRoute;
 import org.springframework.cloud.netflix.zuul.util.RequestUtils;
+import org.springframework.core.Ordered;
 import org.springframework.util.AntPathMatcher;
 import org.springframework.util.PathMatcher;
 import org.springframework.util.StringUtils;
@@ -38,7 +39,8 @@ import lombok.extern.apachecommons.CommonsLog;
  * @author Dave Syer
  */
 @CommonsLog
-public class SimpleRouteLocator implements RouteLocator {
+public class SimpleRouteLocator implements RouteLocator, Ordered {
+	private static final int DEFAULT_ORDER = 0;
 
 	private ZuulProperties properties;
 
@@ -48,10 +50,11 @@ public class SimpleRouteLocator implements RouteLocator {
 	private String zuulServletPath;
 
 	private AtomicReference<Map<String, ZuulRoute>> routes = new AtomicReference<>();
+	private int order = DEFAULT_ORDER;
 
 	public SimpleRouteLocator(String servletPath, ZuulProperties properties) {
 		this.properties = properties;
-		if (servletPath != null && StringUtils.hasText(servletPath)) {
+		if (StringUtils.hasText(servletPath)) {
 			this.dispatcherServletPath = servletPath;
 		}
 
@@ -80,6 +83,11 @@ public class SimpleRouteLocator implements RouteLocator {
 	@Override
 	public Route getMatchingRoute(final String path) {
 
+		return getSimpleMatchingRoute(path);
+
+	}
+
+	protected Route getSimpleMatchingRoute(final String path) {
 		if (log.isDebugEnabled()) {
 			log.debug("Finding route for path: " + path);
 		}
@@ -99,28 +107,30 @@ public class SimpleRouteLocator implements RouteLocator {
 
 		String adjustedPath = adjustPath(path);
 
-		ZuulRoute route = null;
+		ZuulRoute route = getZuulRoute(adjustedPath);
+
+		return getRoute(route, adjustedPath);
+	}
+
+	protected ZuulRoute getZuulRoute(String adjustedPath) {
 		if (!matchesIgnoredPatterns(adjustedPath)) {
 			for (Entry<String, ZuulRoute> entry : this.routes.get().entrySet()) {
 				String pattern = entry.getKey();
 				log.debug("Matching pattern:" + pattern);
 				if (this.pathMatcher.match(pattern, adjustedPath)) {
-					route = entry.getValue();
-					break;
+					return entry.getValue();
 				}
 			}
 		}
-		if (log.isDebugEnabled()) {
-			log.debug("route matched=" + route);
-		}
-
-		return getRoute(route, adjustedPath);
-
+		return null;
 	}
 
-	private Route getRoute(ZuulRoute route, String path) {
+	protected Route getRoute(ZuulRoute route, String path) {
 		if (route == null) {
 			return null;
+		}
+		if (log.isDebugEnabled()) {
+			log.debug("route matched=" + route);
 		}
 		String targetPath = path;
 		String prefix = this.properties.getPrefix();
@@ -196,8 +206,17 @@ public class SimpleRouteLocator implements RouteLocator {
 			// do nothing
 		}
 
-		log.debug("adjustedPath=" + path);
+		log.debug("adjustedPath=" + adjustedPath);
 		return adjustedPath;
+	}
+
+	@Override
+	public int getOrder() {
+		return order;
+	}
+	
+	public void setOrder(int order) {
+		this.order = order;
 	}
 
 }

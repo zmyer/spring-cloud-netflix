@@ -24,26 +24,35 @@ import org.apache.http.client.params.ClientPNames;
 import org.apache.http.client.params.CookiePolicy;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnClass;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingClass;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
+import org.springframework.cloud.client.loadbalancer.LoadBalancedRetryPolicyFactory;
+import org.springframework.cloud.netflix.ribbon.apache.RetryableRibbonLoadBalancingHttpClient;
+import org.springframework.cloud.netflix.ribbon.apache.RibbonLoadBalancingHttpClient;
+import org.springframework.cloud.netflix.ribbon.okhttp.OkHttpLoadBalancingClient;
+import org.springframework.cloud.netflix.ribbon.okhttp.RetryableOkHttpLoadBalancingClient;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Lazy;
-import org.springframework.web.util.UriComponentsBuilder;
 
+import com.netflix.client.AbstractLoadBalancerAwareClient;
 import com.netflix.client.DefaultLoadBalancerRetryHandler;
 import com.netflix.client.RetryHandler;
 import com.netflix.client.config.DefaultClientConfigImpl;
 import com.netflix.client.config.IClientConfig;
 import com.netflix.loadbalancer.ConfigurationBasedServerList;
+import com.netflix.loadbalancer.DummyPing;
 import com.netflix.loadbalancer.ILoadBalancer;
 import com.netflix.loadbalancer.IPing;
 import com.netflix.loadbalancer.IRule;
-import com.netflix.loadbalancer.LoadBalancerBuilder;
-import com.netflix.loadbalancer.NoOpPing;
+import com.netflix.loadbalancer.PollingServerListUpdater;
 import com.netflix.loadbalancer.Server;
 import com.netflix.loadbalancer.ServerList;
 import com.netflix.loadbalancer.ServerListFilter;
+import com.netflix.loadbalancer.ServerListUpdater;
 import com.netflix.loadbalancer.ZoneAvoidanceRule;
 import com.netflix.loadbalancer.ZoneAwareLoadBalancer;
 import com.netflix.niws.client.http.RestClient;
@@ -97,7 +106,7 @@ public class RibbonClientConfiguration {
 		if (this.propertiesFactory.isSet(IPing.class, name)) {
 			return this.propertiesFactory.get(IPing.class, config, name);
 		}
-		return new NoOpPing();
+		return new DummyPing();
 	}
 
 	@Bean
@@ -112,42 +121,128 @@ public class RibbonClientConfiguration {
 		return serverList;
 	}
 
-	/**
-	 * Create a Netflix {@link RestClient} integrated with Ribbon if none already exists
-	 * in the application context. It is not required for Ribbon to work properly and is
-	 * therefore created lazily if ever another component requires it.
-	 *
-	 * @param config the configuration to use by the underlying Ribbon instance
-	 * @param loadBalancer the load balancer to use by the underlying Ribbon instance
-	 * @param serverIntrospector server introspector to use by the underlying Ribbon instance
-	 * @param retryHandler retry handler to use by the underlying Ribbon instance
-	 * @return a {@link RestClient} instances backed by Ribbon
-	 */
+	@Configuration
+	@ConditionalOnProperty(name = "ribbon.httpclient.enabled", matchIfMissing = true)
+	protected static class HttpClientRibbonConfiguration {
+		@Value("${ribbon.client.name}")
+		private String name = "client";
+
+		@Bean
+		@ConditionalOnMissingBean(AbstractLoadBalancerAwareClient.class)
+		@ConditionalOnMissingClass(value = "org.springframework.retry.support.RetryTemplate")
+		public RibbonLoadBalancingHttpClient ribbonLoadBalancingHttpClient(
+				IClientConfig config, ServerIntrospector serverIntrospector,
+				ILoadBalancer loadBalancer, RetryHandler retryHandler) {
+			RibbonLoadBalancingHttpClient client = new RibbonLoadBalancingHttpClient(
+					config, serverIntrospector);
+			client.setLoadBalancer(loadBalancer);
+			client.setRetryHandler(retryHandler);
+			Monitors.registerObject("Client_" + this.name, client);
+			return client;
+		}
+
+		@Bean
+		@ConditionalOnMissingBean(AbstractLoadBalancerAwareClient.class)
+		@ConditionalOnClass(name = "org.springframework.retry.support.RetryTemplate")
+		public RetryableRibbonLoadBalancingHttpClient retryableRibbonLoadBalancingHttpClient(
+				IClientConfig config, ServerIntrospector serverIntrospector,
+				ILoadBalancer loadBalancer, RetryHandler retryHandler,
+				LoadBalancedRetryPolicyFactory loadBalancedRetryPolicyFactory) {
+			RetryableRibbonLoadBalancingHttpClient client = new RetryableRibbonLoadBalancingHttpClient(
+					config, serverIntrospector, loadBalancedRetryPolicyFactory);
+			client.setLoadBalancer(loadBalancer);
+			client.setRetryHandler(retryHandler);
+			Monitors.registerObject("Client_" + this.name, client);
+			return client;
+		}
+	}
+
+	@Configuration
+	@ConditionalOnProperty("ribbon.okhttp.enabled")
+	@ConditionalOnClass(name = "okhttp3.OkHttpClient")
+	protected static class OkHttpRibbonConfiguration {
+		@Value("${ribbon.client.name}")
+		private String name = "client";
+
+
+
+		@Bean
+		@ConditionalOnMissingBean(AbstractLoadBalancerAwareClient.class)
+		@ConditionalOnClass(name = "org.springframework.retry.support.RetryTemplate")
+		public RetryableOkHttpLoadBalancingClient okHttpLoadBalancingClient(IClientConfig config,
+																			ServerIntrospector serverIntrospector,
+																			ILoadBalancer loadBalancer,
+																			RetryHandler retryHandler,
+																			LoadBalancedRetryPolicyFactory loadBalancedRetryPolicyFactory) {
+			RetryableOkHttpLoadBalancingClient client = new RetryableOkHttpLoadBalancingClient(config,
+					serverIntrospector, loadBalancedRetryPolicyFactory);
+			client.setLoadBalancer(loadBalancer);
+			client.setRetryHandler(retryHandler);
+			Monitors.registerObject("Client_" + this.name, client);
+			return client;
+		}
+
+		@Bean
+		@ConditionalOnMissingBean(AbstractLoadBalancerAwareClient.class)
+		@ConditionalOnMissingClass(value = "org.springframework.retry.support.RetryTemplate")
+		public OkHttpLoadBalancingClient retryableOkHttpLoadBalancingClient(IClientConfig config,
+																   ServerIntrospector serverIntrospector, ILoadBalancer loadBalancer,
+																   RetryHandler retryHandler) {
+			OkHttpLoadBalancingClient client = new OkHttpLoadBalancingClient(config,
+					serverIntrospector);
+			client.setLoadBalancer(loadBalancer);
+			client.setRetryHandler(retryHandler);
+			Monitors.registerObject("Client_" + this.name, client);
+			return client;
+		}
+	}
+
+	@Configuration
+	@RibbonAutoConfiguration.ConditionalOnRibbonRestClient
+	protected static class RestClientRibbonConfiguration {
+		@Value("${ribbon.client.name}")
+		private String name = "client";
+
+		/**
+		 * Create a Netflix {@link RestClient} integrated with Ribbon if none already exists
+		 * in the application context. It is not required for Ribbon to work properly and is
+		 * therefore created lazily if ever another component requires it.
+		 *
+		 * @param config             the configuration to use by the underlying Ribbon instance
+		 * @param loadBalancer       the load balancer to use by the underlying Ribbon instance
+		 * @param serverIntrospector server introspector to use by the underlying Ribbon instance
+		 * @param retryHandler       retry handler to use by the underlying Ribbon instance
+		 * @return a {@link RestClient} instances backed by Ribbon
+		 */
+		@Bean
+		@Lazy
+		@ConditionalOnMissingBean(AbstractLoadBalancerAwareClient.class)
+		public RestClient ribbonRestClient(IClientConfig config, ILoadBalancer loadBalancer,
+										   ServerIntrospector serverIntrospector, RetryHandler retryHandler) {
+			RestClient client = new OverrideRestClient(config, serverIntrospector);
+			client.setLoadBalancer(loadBalancer);
+			client.setRetryHandler(retryHandler);
+			Monitors.registerObject("Client_" + this.name, client);
+			return client;
+		}
+	}
+
 	@Bean
-	@Lazy
 	@ConditionalOnMissingBean
-	public RestClient ribbonRestClient(IClientConfig config, ILoadBalancer loadBalancer,
-			ServerIntrospector serverIntrospector, RetryHandler retryHandler) {
-		RestClient client = new OverrideRestClient(config, serverIntrospector);
-		client.setLoadBalancer(loadBalancer);
-		client.setRetryHandler(retryHandler);
-		Monitors.registerObject("Client_" + this.name, client);
-		return client;
+	public ServerListUpdater ribbonServerListUpdater(IClientConfig config) {
+		return new PollingServerListUpdater(config);
 	}
 
 	@Bean
 	@ConditionalOnMissingBean
 	public ILoadBalancer ribbonLoadBalancer(IClientConfig config,
 			ServerList<Server> serverList, ServerListFilter<Server> serverListFilter,
-			IRule rule, IPing ping) {
+			IRule rule, IPing ping, ServerListUpdater serverListUpdater) {
 		if (this.propertiesFactory.isSet(ILoadBalancer.class, name)) {
 			return this.propertiesFactory.get(ILoadBalancer.class, config, name);
 		}
-		ZoneAwareLoadBalancer<Server> balancer = LoadBalancerBuilder.newBuilder()
-				.withClientConfig(config).withRule(rule).withPing(ping)
-				.withServerListFilter(serverListFilter).withDynamicServerList(serverList)
-				.buildDynamicServerListLoadBalancer();
-		return balancer;
+		return new ZoneAwareLoadBalancer<>(config, rule, ping, serverList,
+				serverListFilter, serverListUpdater);
 	}
 
 	@Bean

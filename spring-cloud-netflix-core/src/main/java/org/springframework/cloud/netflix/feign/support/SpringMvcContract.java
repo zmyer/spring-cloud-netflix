@@ -28,7 +28,6 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
-import org.springframework.beans.BeanUtils;
 import org.springframework.cloud.netflix.feign.AnnotatedParameterProcessor;
 import org.springframework.cloud.netflix.feign.annotation.PathVariableParameterProcessor;
 import org.springframework.cloud.netflix.feign.annotation.RequestHeaderParameterProcessor;
@@ -58,6 +57,7 @@ import feign.Param;
 
 /**
  * @author Spencer Gibb
+ * @author Abhijit Sarkar
  */
 public class SpringMvcContract extends Contract.BaseContract
 		implements ResourceLoaderAware {
@@ -155,7 +155,8 @@ public class SpringMvcContract extends Contract.BaseContract
 	@Override
 	protected void processAnnotationOnMethod(MethodMetadata data,
 			Annotation methodAnnotation, Method method) {
-		if (!(methodAnnotation instanceof RequestMapping)) {
+		if (!RequestMapping.class.isInstance(methodAnnotation) && !methodAnnotation
+				.annotationType().isAnnotationPresent(RequestMapping.class)) {
 			return;
 		}
 
@@ -235,23 +236,15 @@ public class SpringMvcContract extends Contract.BaseContract
 				processParameterAnnotation = synthesizeWithMethodParameterNameAsFallbackValue(
 						parameterAnnotation, method, paramIndex);
 				isHttpAnnotation |= processor.processArgument(context,
-						processParameterAnnotation);
+						processParameterAnnotation, method);
 			}
 		}
 		if (isHttpAnnotation && data.indexToExpander().get(paramIndex) == null
-				&& !isMultiValued(method.getParameterTypes()[paramIndex])
 				&& this.conversionService.canConvert(
 						method.getParameterTypes()[paramIndex], String.class)) {
 			data.indexToExpander().put(paramIndex, this.expander);
 		}
 		return isHttpAnnotation;
-	}
-
-	private boolean isMultiValued(Class<?> type) {
-		// Feign will deal with each element in a collection individually (with no
-		// expander as of 8.16.2, but we'd rather have no conversion than convert a
-		// collection to a String (which ends up being a csv).
-		return Collection.class.isAssignableFrom(type);
 	}
 
 	private void parseProduces(MethodMetadata md, Method method,
@@ -330,9 +323,7 @@ public class SpringMvcContract extends Contract.BaseContract
 		// has a parameter name
 		return parameterNames != null && parameterNames.length > parameterIndex
 				// has a type
-				&& parameterTypes != null && parameterTypes.length > parameterIndex
-				// and it is a simple property
-				&& BeanUtils.isSimpleProperty(parameterTypes[parameterIndex].getClass());
+				&& parameterTypes != null && parameterTypes.length > parameterIndex;
 	}
 
 	private class SimpleAnnotatedParameterContext

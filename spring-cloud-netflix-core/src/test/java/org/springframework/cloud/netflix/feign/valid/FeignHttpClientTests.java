@@ -42,6 +42,8 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.test.annotation.DirtiesContext;
 import org.springframework.test.context.junit4.SpringJUnit4ClassRunner;
 import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestMethod;
 import org.springframework.web.bind.annotation.RestController;
@@ -110,7 +112,14 @@ public class FeignHttpClientTests {
 		}
 
 		@RequestMapping(method = RequestMethod.PATCH, value = "/hellop")
-		public ResponseEntity<Void> patchHello() {
+		public ResponseEntity<Void> patchHello(@RequestBody Hello hello,
+											   @RequestHeader("Content-Length") int contentLength) {
+			if (contentLength <= 0) {
+				throw new IllegalArgumentException("Invalid Content-Length "+ contentLength);
+			}
+			if (!hello.getMessage().equals("foo")) {
+				throw new IllegalArgumentException("Invalid Hello: " + hello.getMessage());
+			}
 			return ResponseEntity.ok().header("X-Hello", "hello world patch").build();
 		}
 

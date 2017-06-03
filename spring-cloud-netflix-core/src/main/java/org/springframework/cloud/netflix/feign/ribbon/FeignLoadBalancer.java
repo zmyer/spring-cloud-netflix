@@ -16,14 +16,22 @@
 
 package org.springframework.cloud.netflix.feign.ribbon;
 
+import feign.Client;
+import feign.Request;
+import feign.Response;
+
 import java.io.IOException;
 import java.net.URI;
+import java.util.ArrayList;
 import java.util.Collection;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
-
 import org.springframework.cloud.netflix.ribbon.ServerIntrospector;
-
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.HttpMethod;
+import org.springframework.http.HttpRequest;
 import com.netflix.client.AbstractLoadBalancerAwareClient;
 import com.netflix.client.ClientException;
 import com.netflix.client.ClientRequest;
@@ -35,23 +43,18 @@ import com.netflix.client.config.IClientConfig;
 import com.netflix.loadbalancer.ILoadBalancer;
 import com.netflix.loadbalancer.Server;
 
-import feign.Client;
-import feign.Request;
-import feign.Response;
-import feign.Util;
-
 import static org.springframework.cloud.netflix.ribbon.RibbonUtils.updateToHttpsIfNeeded;
 
 public class FeignLoadBalancer extends
 		AbstractLoadBalancerAwareClient<FeignLoadBalancer.RibbonRequest, FeignLoadBalancer.RibbonResponse> {
 
-	private final int connectTimeout;
-	private final int readTimeout;
-	private final IClientConfig clientConfig;
-	private final ServerIntrospector serverIntrospector;
+	protected int connectTimeout;
+	protected int readTimeout;
+	protected IClientConfig clientConfig;
+	protected ServerIntrospector serverIntrospector;
 
 	public FeignLoadBalancer(ILoadBalancer lb, IClientConfig clientConfig,
-			ServerIntrospector serverIntrospector) {
+							 ServerIntrospector serverIntrospector) {
 		super(lb, clientConfig);
 		this.setRetryHandler(RetryHandler.DEFAULT);
 		this.clientConfig = clientConfig;
@@ -116,8 +119,6 @@ public class FeignLoadBalancer extends
 		private Request toRequest(Request request) {
 			Map<String, Collection<String>> headers = new LinkedHashMap<>(
 					request.headers());
-			// Apache client barfs if you set the content length
-			headers.remove(Util.CONTENT_LENGTH);
 			return Request.create(request.method(),getUri().toASCIIString(),headers,request.body(),request.charset());
 		}
 
@@ -128,6 +129,34 @@ public class FeignLoadBalancer extends
 		Client client() {
 			return this.client;
 		}
+
+		HttpRequest toHttpRequest() {
+			return new HttpRequest() {
+				@Override
+				public HttpMethod getMethod() {
+					return HttpMethod.resolve(RibbonRequest.this.toRequest().method());
+				}
+
+				@Override
+				public URI getURI() {
+					return RibbonRequest.this.getUri();
+				}
+
+				@Override
+				public HttpHeaders getHeaders() {
+					Map<String, List<String>> headers = new HashMap<String, List<String>>();
+					Map<String, Collection<String>> feignHeaders = RibbonRequest.this.toRequest().headers();
+					for(String key : feignHeaders.keySet()) {
+						headers.put(key, new ArrayList<String>(feignHeaders.get(key)));
+					}
+					HttpHeaders httpHeaders = new HttpHeaders();
+					httpHeaders.putAll(headers);
+					return httpHeaders;
+
+				}
+			};
+		}
+
 
 		@Override
 		public Object clone() {

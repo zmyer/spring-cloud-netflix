@@ -17,20 +17,24 @@
 
 package org.springframework.cloud.netflix.ribbon;
 
-import com.netflix.client.config.CommonClientConfigKey;
+import java.net.URI;
+import java.net.URISyntaxException;
+import java.util.Map;
+
 import org.junit.Assert;
 import org.junit.Test;
 
+import com.netflix.client.config.CommonClientConfigKey;
 import com.netflix.client.config.DefaultClientConfigImpl;
 import com.netflix.loadbalancer.Server;
 
-import java.util.Map;
-
 import static org.hamcrest.Matchers.is;
 import static org.springframework.cloud.netflix.ribbon.RibbonUtils.isSecure;
+import static org.springframework.cloud.netflix.ribbon.RibbonUtils.updateToHttpsIfNeeded;
 
 /**
  * @author Spencer Gibb
+ * @author Jacques-Etienne Beaudet
  */
 public class RibbonUtilsTests {
 
@@ -75,6 +79,43 @@ public class RibbonUtilsTests {
 	public void nonSecureRibbonPropSecureIntrospector() {
 		boolean secure = isSecure(NON_SECURE_CONFIG, SECURE_INTROSPECTOR, SERVER);
 		Assert.assertThat("isSecure was wrong", secure, is(false));
+	}
+
+	@Test
+	public void uriIsNotChangedWhenServerIsNotSecured() throws URISyntaxException {
+		URI original = new URI("http://foo");
+		URI updated = updateToHttpsIfNeeded(original, NON_SECURE_CONFIG, NON_SECURE_INTROSPECTOR, SERVER);
+		Assert.assertThat("URI should not have been updated since server is not secured.", original, is(updated));
+	}
+
+	@Test
+	public void uriIsNotChangedWhenServerIsSecuredAndUriAlreadyInHttps() throws URISyntaxException {
+		URI original = new URI("https://foo");
+		URI updated = updateToHttpsIfNeeded(original, SECURE_CONFIG, SECURE_INTROSPECTOR, SERVER);
+		Assert.assertThat("URI should not have been updated since uri is already in https.", original, is(updated));
+	}
+
+	@Test
+	public void shouldUpgradeUriToHttpsWhenServerIsSecureAndUriNotInHttps() throws URISyntaxException {
+		URI original = new URI("http://foo");
+		URI updated = updateToHttpsIfNeeded(original, SECURE_CONFIG, SECURE_INTROSPECTOR, SERVER);
+		Assert.assertThat("URI should have been updated to https.", updated, is(new URI("https://foo")));
+	}
+
+	@Test
+	public void shouldSubstitutePlusInQueryParam() throws URISyntaxException {
+		URI original = new URI("http://foo/%20bar?hello=1+2");
+		URI updated = updateToHttpsIfNeeded(original, SECURE_CONFIG, SECURE_INTROSPECTOR, SERVER);
+		Assert.assertThat("URI should have had its plus sign replaced in query string.", updated, is(new URI(
+				"https://foo/%20bar?hello=1%202")));
+	}
+
+	@Test
+	public void emptyStringUri() throws URISyntaxException {
+		URI original = new URI("");
+		URI updated = updateToHttpsIfNeeded(original, SECURE_CONFIG, SECURE_INTROSPECTOR, SERVER);
+		Assert.assertThat("URI should be the emptry string", updated, is(new URI(
+				"")));
 	}
 
 	static DefaultClientConfigImpl getConfig(boolean value) {

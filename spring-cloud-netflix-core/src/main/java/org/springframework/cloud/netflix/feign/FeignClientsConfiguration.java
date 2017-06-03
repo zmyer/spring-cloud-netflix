@@ -19,7 +19,6 @@ package org.springframework.cloud.netflix.feign;
 import java.util.ArrayList;
 import java.util.List;
 
-import org.apache.http.client.HttpClient;
 import org.springframework.beans.factory.ObjectFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnClass;
@@ -39,16 +38,17 @@ import org.springframework.format.support.FormattingConversionService;
 
 import com.netflix.hystrix.HystrixCommand;
 
-import feign.Client;
 import feign.Contract;
 import feign.Feign;
+import feign.Logger;
+import feign.Retryer;
 import feign.codec.Decoder;
 import feign.codec.Encoder;
-import feign.httpclient.ApacheHttpClient;
 import feign.hystrix.HystrixFeign;
 
 /**
  * @author Dave Syer
+ * @author Venil Noronha
  */
 @Configuration
 public class FeignClientsConfiguration {
@@ -61,6 +61,9 @@ public class FeignClientsConfiguration {
 
 	@Autowired(required = false)
 	private List<FeignFormatterRegistrar> feignFormatterRegistrars = new ArrayList<>();
+
+	@Autowired(required = false)
+	private Logger logger;
 
 	@Bean
 	@ConditionalOnMissingBean
@@ -95,17 +98,29 @@ public class FeignClientsConfiguration {
 		@Bean
 		@Scope("prototype")
 		@ConditionalOnMissingBean
-		@ConditionalOnProperty(name = "feign.hystrix.enabled", matchIfMissing = true)
+		@ConditionalOnProperty(name = "feign.hystrix.enabled", matchIfMissing = false)
 		public Feign.Builder feignHystrixBuilder() {
 			return HystrixFeign.builder();
 		}
 	}
 
 	@Bean
+	@ConditionalOnMissingBean
+	public Retryer feignRetryer() {
+		return Retryer.NEVER_RETRY;
+	}
+
+	@Bean
 	@Scope("prototype")
 	@ConditionalOnMissingBean
-	public Feign.Builder feignBuilder() {
-		return Feign.builder();
+	public Feign.Builder feignBuilder(Retryer retryer) {
+		return Feign.builder().retryer(retryer);
+	}
+
+	@Bean
+	@ConditionalOnMissingBean(FeignLoggerFactory.class)
+	public FeignLoggerFactory feignLoggerFactory() {
+		return new DefaultFeignLoggerFactory(logger);
 	}
 
 }

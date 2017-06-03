@@ -43,6 +43,7 @@ import static org.hamcrest.Matchers.nullValue;
 import static org.junit.Assert.assertThat;
 import static org.junit.Assert.assertTrue;
 import static org.mockito.MockitoAnnotations.initMocks;
+import static org.springframework.cloud.netflix.zuul.filters.support.FilterConstants.REQUEST_URI_KEY;
 
 /**
  * @author Spencer Gibb
@@ -260,6 +261,28 @@ public class ProxyRequestHelperTests {
 	}
 
 	@Test
+	public void getQueryStringEncoded() {
+		MultiValueMap<String, String> params = new LinkedMultiValueMap<>();
+		params.add("foo", "weird#chars");
+
+		String queryString = new ProxyRequestHelper().getQueryString(params);
+
+		assertThat(queryString, is("?foo=weird%23chars"));
+	}
+
+	@Test
+	public void getQueryParamNameWithColon() {
+		MultiValueMap<String, String> params = new LinkedMultiValueMap<>();
+		params.add("foo:bar", "baz");
+		params.add("foobar", "bam");
+		params.add("foo\fbar", "bat"); // form feed is the colon replacement char
+
+		String queryString = new ProxyRequestHelper().getQueryString(params);
+
+		assertThat(queryString, is("?foo:bar=baz&foobar=bam&foo%0Cbar=bat"));
+	}
+
+	@Test
 	public void buildZuulRequestURIWithUTF8() throws Exception {
 		String encodedURI = "/resource/esp%C3%A9cial-char";
 		String decodedURI = "/resource/espécial-char";
@@ -268,7 +291,7 @@ public class ProxyRequestHelperTests {
 		request.setCharacterEncoding("UTF-8");
 		final RequestContext context = RequestContext.getCurrentContext();
 		context.setRequest(request);
-		context.set("requestURI", decodedURI);
+		context.set(REQUEST_URI_KEY, decodedURI);
 
 		final String requestURI = new ProxyRequestHelper().buildZuulRequestURI(request);
 		assertThat(requestURI, equalTo(encodedURI));
@@ -282,7 +305,7 @@ public class ProxyRequestHelperTests {
 		MockHttpServletRequest request = new MockHttpServletRequest("GET", encodedURI);
 		final RequestContext context = RequestContext.getCurrentContext();
 		context.setRequest(request);
-		context.set("requestURI", decodedURI);
+		context.set(REQUEST_URI_KEY, decodedURI);
 
 		final String requestURI = new ProxyRequestHelper().buildZuulRequestURI(request);
 		assertThat(requestURI, equalTo(encodedURI));
@@ -296,7 +319,7 @@ public class ProxyRequestHelperTests {
 		request.setCharacterEncoding("UTF-8");
 
 		RequestContext context = RequestContext.getCurrentContext();
-		context.set("requestURI", requestURI);
+		context.set(REQUEST_URI_KEY, requestURI);
 
 		ProxyRequestHelper helper = new ProxyRequestHelper();
 
@@ -312,7 +335,7 @@ public class ProxyRequestHelperTests {
 		MockHttpServletRequest request = new MockHttpServletRequest("GET", requestURI);
 
 		RequestContext context = RequestContext.getCurrentContext();
-		context.set("requestURI", requestURI);
+		context.set(REQUEST_URI_KEY, requestURI);
 
 		ProxyRequestHelper helper = new ProxyRequestHelper();
 

@@ -20,15 +20,18 @@ import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
 import org.springframework.beans.factory.BeanCreationException;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.autoconfigure.PropertyPlaceholderAutoConfiguration;
+import org.springframework.boot.bind.RelaxedPropertyResolver;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.cloud.commons.util.InetUtils;
 import org.springframework.cloud.commons.util.InetUtilsProperties;
 import org.springframework.context.annotation.AnnotationConfigApplicationContext;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.core.env.ConfigurableEnvironment;
 import org.springframework.test.util.ReflectionTestUtils;
-
+import org.springframework.util.StringUtils;
 import com.netflix.appinfo.InstanceInfo.InstanceStatus;
 
 import static org.junit.Assert.assertEquals;
@@ -38,6 +41,7 @@ import static org.springframework.boot.test.util.EnvironmentTestUtils.addEnviron
 /**
  * @author Dave Syer
  * @author Spencer Gibb
+ * @author Ryan Baxter
  */
 public class EurekaInstanceConfigBeanTests {
 
@@ -177,12 +181,30 @@ public class EurekaInstanceConfigBeanTests {
 	}
 
 	@Test
-	public void testVirtualHostName() throws Exception {
+	public void testDefaultVirtualHostName() throws Exception {
 		addEnvironment(this.context, "spring.application.name:myapp");
 		setupContext();
 		assertEquals("virtualHostName wrong", "myapp", getInstanceConfig().getVirtualHostName());
 		assertEquals("secureVirtualHostName wrong", "myapp", getInstanceConfig().getSecureVirtualHostName());
 
+	}
+
+	@Test
+	public void testCustomVirtualHostName() throws Exception {
+		addEnvironment(this.context, "spring.application.name:myapp", "eureka.instance.virtualHostName=myvirthost",
+				"eureka.instance.secureVirtualHostName=mysecurevirthost");
+		setupContext();
+		assertEquals("virtualHostName wrong", "myvirthost", getInstanceConfig().getVirtualHostName());
+		assertEquals("secureVirtualHostName wrong", "mysecurevirthost", getInstanceConfig().getSecureVirtualHostName());
+
+	}
+
+	@Test
+	public void testDefaultAppName() throws Exception {
+		setupContext();
+		assertEquals("default app name is wrong", "unknown", getInstanceConfig().getAppname());
+		assertEquals("default virtual hostname is wrong", "unknown", getInstanceConfig().getVirtualHostName());
+		assertEquals("default secure virtual hostname is wrong", "unknown", getInstanceConfig().getSecureVirtualHostName());
 	}
 
 	private void setupContext() {
@@ -198,9 +220,19 @@ public class EurekaInstanceConfigBeanTests {
 	@Configuration
 	@EnableConfigurationProperties
 	protected static class TestConfiguration {
+		@Autowired
+		ConfigurableEnvironment env;
 		@Bean
 		public EurekaInstanceConfigBean eurekaInstanceConfigBean() {
-			return new EurekaInstanceConfigBean(new InetUtils(new InetUtilsProperties()));
+			EurekaInstanceConfigBean configBean = new EurekaInstanceConfigBean(new InetUtils(new InetUtilsProperties()));
+			RelaxedPropertyResolver springPropertyResolver = new RelaxedPropertyResolver(env, "spring.application.");
+			String springAppName = springPropertyResolver.getProperty("name");
+			if(StringUtils.hasText(springAppName)) {
+				configBean.setSecureVirtualHostName(springAppName);
+				configBean.setVirtualHostName(springAppName);
+				configBean.setAppname(springAppName);
+			}
+			return configBean;
 		}
 
 	}

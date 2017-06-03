@@ -1,5 +1,5 @@
 /*
- * Copyright 2013-2015 the original author or authors.
+ * Copyright 2013-2017 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,20 +16,26 @@
 
 package org.springframework.cloud.netflix.zuul;
 
+import java.util.Collection;
 import java.util.Map;
 
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.actuate.metrics.CounterService;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnClass;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.boot.autoconfigure.web.ErrorController;
 import org.springframework.boot.autoconfigure.web.ServerProperties;
 import org.springframework.boot.autoconfigure.web.ServerPropertiesAutoConfiguration;
-import org.springframework.boot.context.embedded.ServletRegistrationBean;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
+import org.springframework.boot.web.servlet.ServletRegistrationBean;
 import org.springframework.cloud.client.actuator.HasFeatures;
 import org.springframework.cloud.client.discovery.event.HeartbeatEvent;
 import org.springframework.cloud.client.discovery.event.HeartbeatMonitor;
 import org.springframework.cloud.context.scope.refresh.RefreshScopeRefreshedEvent;
+import org.springframework.cloud.netflix.ribbon.SpringClientFactory;
+import org.springframework.cloud.netflix.zuul.filters.CompositeRouteLocator;
 import org.springframework.cloud.netflix.zuul.filters.RouteLocator;
 import org.springframework.cloud.netflix.zuul.filters.SimpleRouteLocator;
 import org.springframework.cloud.netflix.zuul.filters.ZuulProperties;
@@ -40,6 +46,9 @@ import org.springframework.cloud.netflix.zuul.filters.pre.FormBodyWrapperFilter;
 import org.springframework.cloud.netflix.zuul.filters.pre.Servlet30WrapperFilter;
 import org.springframework.cloud.netflix.zuul.filters.pre.ServletDetectionFilter;
 import org.springframework.cloud.netflix.zuul.filters.route.SendForwardFilter;
+import org.springframework.cloud.netflix.zuul.metrics.DefaultCounterFactory;
+import org.springframework.cloud.netflix.zuul.metrics.EmptyCounterFactory;
+import org.springframework.cloud.netflix.zuul.metrics.EmptyTracerFactory;
 import org.springframework.cloud.netflix.zuul.web.ZuulController;
 import org.springframework.cloud.netflix.zuul.web.ZuulHandlerMapping;
 import org.springframework.context.ApplicationEvent;
@@ -47,21 +56,28 @@ import org.springframework.context.ApplicationListener;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Import;
+import org.springframework.context.annotation.Primary;
 import org.springframework.context.event.ContextRefreshedEvent;
 
+import com.netflix.zuul.FilterLoader;
 import com.netflix.zuul.ZuulFilter;
+import com.netflix.zuul.filters.FilterRegistry;
 import com.netflix.zuul.http.ZuulServlet;
+import com.netflix.zuul.monitoring.CounterFactory;
+import com.netflix.zuul.monitoring.TracerFactory;
 
 /**
  * @author Spencer Gibb
  * @author Dave Syer
+ * @author Biju Kunjummen
  */
 @Configuration
 @EnableConfigurationProperties({ ZuulProperties.class })
 @ConditionalOnClass(ZuulServlet.class)
+@ConditionalOnBean(ZuulServerMarkerConfiguration.Marker.class)
 // Make sure to get the ServerProperties from the same place as a normal web app would
 @Import(ServerPropertiesAutoConfiguration.class)
-public class ZuulConfiguration {
+public class ZuulServerAutoConfiguration {
 
 	@Autowired
 	protected ZuulProperties zuulProperties;
@@ -74,12 +90,19 @@ public class ZuulConfiguration {
 
 	@Bean
 	public HasFeatures zuulFeature() {
-		return HasFeatures.namedFeature("Zuul (Simple)", ZuulConfiguration.class);
+		return HasFeatures.namedFeature("Zuul (Simple)", ZuulServerAutoConfiguration.class);
 	}
 
 	@Bean
-	@ConditionalOnMissingBean(RouteLocator.class)
-	public RouteLocator routeLocator() {
+	@Primary
+	public CompositeRouteLocator primaryRouteLocator(
+			Collection<RouteLocator> routeLocators) {
+		return new CompositeRouteLocator(routeLocators);
+	}
+
+	@Bean
+	@ConditionalOnMissingBean(SimpleRouteLocator.class)
+	public SimpleRouteLocator simpleRouteLocator() {
 		return new SimpleRouteLocator(this.server.getServletPrefix(),
 				this.zuulProperties);
 	}
@@ -151,6 +174,14 @@ public class ZuulConfiguration {
 		return new SendForwardFilter();
 	}
 
+	@Bean
+	@ConditionalOnProperty(value = "zuul.ribbon.eager-load.enabled", matchIfMissing = false)
+	public ZuulRouteApplicationContextInitializer zuulRoutesApplicationContextInitiazer(
+			SpringClientFactory springClientFactory) {
+		return new ZuulRouteApplicationContextInitializer(springClientFactory,
+				zuulProperties);
+	}
+
 	@Configuration
 	protected static class ZuulFilterConfiguration {
 
@@ -158,8 +189,39 @@ public class ZuulConfiguration {
 		private Map<String, ZuulFilter> filters;
 
 		@Bean
-		public ZuulFilterInitializer zuulFilterInitializer() {
-			return new ZuulFilterInitializer(this.filters);
+		public ZuulFilterInitializer zuulFilterInitializer(
+				CounterFactory counterFactory, TracerFactory tracerFactory) {
+			FilterLoader filterLoader = FilterLoader.getInstance();
+			FilterRegistry filterRegistry = FilterRegistry.instance();
+			return new ZuulFilterInitializer(this.filters, counterFactory, tracerFactory, filterLoader, filterRegistry);
+		}
+
+	}
+
+	@Configuration
+	@ConditionalOnClass(CounterService.class)
+	protected static class ZuulCounterFactoryConfiguration {
+
+		@Bean
+		@ConditionalOnBean(CounterService.class)
+		public CounterFactory counterFactory(CounterService counterService) {
+			return new DefaultCounterFactory(counterService);
+		}
+	}
+
+	@Configuration
+	protected static class ZuulMetricsConfiguration {
+
+		@Bean
+		@ConditionalOnMissingBean(CounterFactory.class)
+		public CounterFactory counterFactory() {
+			return new EmptyCounterFactory();
+		}
+
+		@ConditionalOnMissingBean(TracerFactory.class)
+		@Bean
+		public TracerFactory tracerFactory() {
+			return new EmptyTracerFactory();
 		}
 
 	}

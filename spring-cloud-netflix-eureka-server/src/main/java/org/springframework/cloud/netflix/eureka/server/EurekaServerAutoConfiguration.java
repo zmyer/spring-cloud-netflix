@@ -28,14 +28,13 @@ import javax.ws.rs.ext.Provider;
 
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Qualifier;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.beans.factory.config.BeanDefinition;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
-import org.springframework.boot.context.embedded.FilterRegistrationBean;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
+import org.springframework.boot.web.servlet.FilterRegistrationBean;
 import org.springframework.cloud.client.actuator.HasFeatures;
-import org.springframework.cloud.client.discovery.EnableDiscoveryClient;
 import org.springframework.cloud.netflix.eureka.EurekaConstants;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.ClassPathScanningCandidateComponentProvider;
@@ -67,13 +66,15 @@ import com.sun.jersey.spi.container.servlet.ServletContainer;
 
 /**
  * @author Gunnar Hillert
+ * @author Biju Kunjummen
  */
 @Configuration
 @Import(EurekaServerInitializerConfiguration.class)
-@EnableDiscoveryClient
-@EnableConfigurationProperties(EurekaDashboardProperties.class)
+@ConditionalOnBean(EurekaServerMarkerConfiguration.Marker.class)
+@EnableConfigurationProperties({ EurekaDashboardProperties.class,
+		InstanceRegistryProperties.class })
 @PropertySource("classpath:/eureka/server.properties")
-public class EurekaServerConfiguration extends WebMvcConfigurerAdapter {
+public class EurekaServerAutoConfiguration extends WebMvcConfigurerAdapter {
 	/**
 	 * List of packages containing Jersey resources required by the Eureka server
 	 */
@@ -92,22 +93,15 @@ public class EurekaServerConfiguration extends WebMvcConfigurerAdapter {
 	@Autowired
 	private EurekaClient eurekaClient;
 
-	/*
-	 * Setting expectedNumberOfRenewsPerMin to non-zero to ensure that even an isolated
-	 * server can adjust its eviction policy to the number of registrations (when it's
-	 * zero, even a successful registration won't reset the rate threshold in
-	 * InstanceRegistry.register()).
-	 */
-	@Value("${eureka.server.expectedNumberOfRenewsPerMin:1}")
-	private int expectedNumberOfRenewsPerMin;
+	@Autowired
+	private InstanceRegistryProperties instanceRegistryProperties;
 
-	@Value("${eureka.server.defaultOpenForTrafficCount:1}")
-	private int defaultOpenForTrafficCount;
 	public static final CloudJacksonJson JACKSON_JSON = new CloudJacksonJson();
 
 	@Bean
 	public HasFeatures eurekaServerFeature() {
-		return HasFeatures.namedFeature("Eureka Server", EurekaServerConfiguration.class);
+		return HasFeatures.namedFeature("Eureka Server",
+				EurekaServerAutoConfiguration.class);
 	}
 
 	@Configuration
@@ -166,11 +160,13 @@ public class EurekaServerConfiguration extends WebMvcConfigurerAdapter {
 			ServerCodecs serverCodecs) {
 		this.eurekaClient.getApplications(); // force initialization
 		return new InstanceRegistry(this.eurekaServerConfig, this.eurekaClientConfig,
-				serverCodecs, this.eurekaClient, this.expectedNumberOfRenewsPerMin,
-				this.defaultOpenForTrafficCount);
+				serverCodecs, this.eurekaClient,
+				this.instanceRegistryProperties.getExpectedNumberOfRenewsPerMin(),
+				this.instanceRegistryProperties.getDefaultOpenForTrafficCount());
 	}
 
 	@Bean
+	@ConditionalOnMissingBean
 	public PeerEurekaNodes peerEurekaNodes(PeerAwareInstanceRegistry registry,
 			ServerCodecs serverCodecs) {
 		return new PeerEurekaNodes(registry, this.eurekaServerConfig,

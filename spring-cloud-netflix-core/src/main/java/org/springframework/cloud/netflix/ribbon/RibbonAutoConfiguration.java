@@ -1,5 +1,5 @@
 /*
- * Copyright 2013-2015 the original author or authors.
+ * Copyright 2013-2017 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,21 +16,33 @@
 
 package org.springframework.cloud.netflix.ribbon;
 
+import java.lang.annotation.Documented;
+import java.lang.annotation.ElementType;
+import java.lang.annotation.Retention;
+import java.lang.annotation.RetentionPolicy;
+import java.lang.annotation.Target;
 import java.util.ArrayList;
 import java.util.List;
 
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.autoconfigure.AutoConfigureAfter;
 import org.springframework.boot.autoconfigure.AutoConfigureBefore;
+import org.springframework.boot.autoconfigure.condition.AnyNestedCondition;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnClass;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingClass;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
+import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.cloud.client.actuator.HasFeatures;
+import org.springframework.cloud.client.loadbalancer.AsyncLoadBalancerAutoConfiguration;
+import org.springframework.cloud.client.loadbalancer.LoadBalancedRetryPolicyFactory;
 import org.springframework.cloud.client.loadbalancer.LoadBalancerAutoConfiguration;
 import org.springframework.cloud.client.loadbalancer.LoadBalancerClient;
 import org.springframework.cloud.client.loadbalancer.RestTemplateCustomizer;
 import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Conditional;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.web.client.AsyncRestTemplate;
 import org.springframework.web.client.RestTemplate;
 
 import com.netflix.client.IClient;
@@ -42,16 +54,21 @@ import com.netflix.ribbon.Ribbon;
  *
  * @author Spencer Gibb
  * @author Dave Syer
+ * @author Biju Kunjummen
  */
 @Configuration
-@ConditionalOnClass({ IClient.class, RestTemplate.class })
+@ConditionalOnClass({ IClient.class, RestTemplate.class, AsyncRestTemplate.class, Ribbon.class})
 @RibbonClients
 @AutoConfigureAfter(name = "org.springframework.cloud.netflix.eureka.EurekaClientAutoConfiguration")
-@AutoConfigureBefore(LoadBalancerAutoConfiguration.class)
+@AutoConfigureBefore({LoadBalancerAutoConfiguration.class, AsyncLoadBalancerAutoConfiguration.class})
+@EnableConfigurationProperties({RibbonEagerLoadProperties.class, ServerIntrospectorProperties.class})
 public class RibbonAutoConfiguration {
 
 	@Autowired(required = false)
 	private List<RibbonClientSpecification> configurations = new ArrayList<>();
+	
+	@Autowired
+	private RibbonEagerLoadProperties ribbonEagerLoadProperties;
 
 	@Bean
 	public HasFeatures ribbonFeature() {
@@ -72,14 +89,35 @@ public class RibbonAutoConfiguration {
 	}
 
 	@Bean
+	@ConditionalOnClass(name = "org.springframework.retry.support.RetryTemplate")
+	@ConditionalOnMissingBean
+	public LoadBalancedRetryPolicyFactory loadBalancedRetryPolicyFactory(SpringClientFactory clientFactory) {
+		return new RibbonLoadBalancedRetryPolicyFactory(clientFactory);
+	}
+
+	@Bean
+	@ConditionalOnMissingClass(value = "org.springframework.retry.support.RetryTemplate")
+	@ConditionalOnMissingBean
+	public LoadBalancedRetryPolicyFactory neverRetryPolicyFactory() {
+		return new LoadBalancedRetryPolicyFactory.NeverRetryFactory();
+	}
+
+	@Bean
 	@ConditionalOnMissingBean
 	public PropertiesFactory propertiesFactory() {
 		return new PropertiesFactory();
 	}
+	
+	@Bean
+	@ConditionalOnProperty(value = "ribbon.eager-load.enabled", matchIfMissing = false)
+	public RibbonApplicationContextInitializer ribbonApplicationContextInitializer() {
+		return new RibbonApplicationContextInitializer(springClientFactory(),
+				ribbonEagerLoadProperties.getClients());
+	}
 
 	@Configuration
 	@ConditionalOnClass(HttpRequest.class)
-	@ConditionalOnProperty(value = "ribbon.http.client.enabled", matchIfMissing = false)
+	@ConditionalOnRibbonRestClient
 	protected static class RibbonClientConfig {
 
 		@Autowired
@@ -102,4 +140,24 @@ public class RibbonAutoConfiguration {
 		}
 	}
 
+	//TODO: support for autoconfiguring restemplate to use apache http client or okhttp
+
+	@Target({ ElementType.TYPE, ElementType.METHOD })
+	@Retention(RetentionPolicy.RUNTIME)
+	@Documented
+	@Conditional(OnRibbonRestClientCondition.class)
+	@interface ConditionalOnRibbonRestClient { }
+
+	private static class OnRibbonRestClientCondition extends AnyNestedCondition {
+		public OnRibbonRestClientCondition() {
+			super(ConfigurationPhase.REGISTER_BEAN);
+		}
+
+		@Deprecated //remove in Edgware"
+		@ConditionalOnProperty("ribbon.http.client.enabled")
+		static class ZuulProperty {}
+
+		@ConditionalOnProperty("ribbon.restclient.enabled")
+		static class RibbonProperty {}
+	}
 }

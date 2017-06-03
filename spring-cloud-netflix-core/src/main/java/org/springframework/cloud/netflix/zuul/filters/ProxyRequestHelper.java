@@ -16,9 +16,6 @@
 
 package org.springframework.cloud.netflix.zuul.filters;
 
-import static org.springframework.http.HttpHeaders.CONTENT_ENCODING;
-import static org.springframework.http.HttpHeaders.CONTENT_LENGTH;
-
 import java.io.IOException;
 import java.io.InputStream;
 import java.util.Collection;
@@ -44,6 +41,10 @@ import org.springframework.web.util.WebUtils;
 
 import com.netflix.zuul.context.RequestContext;
 import com.netflix.zuul.util.HTTPRequestUtils;
+
+import static org.springframework.cloud.netflix.zuul.filters.support.FilterConstants.REQUEST_URI_KEY;
+import static org.springframework.http.HttpHeaders.CONTENT_ENCODING;
+import static org.springframework.http.HttpHeaders.CONTENT_LENGTH;
 
 import lombok.extern.apachecommons.CommonsLog;
 
@@ -88,7 +89,7 @@ public class ProxyRequestHelper {
 	public String buildZuulRequestURI(HttpServletRequest request) {
 		RequestContext context = RequestContext.getCurrentContext();
 		String uri = request.getRequestURI();
-		String contextURI = (String) context.get("requestURI");
+		String contextURI = (String) context.get(REQUEST_URI_KEY);
 		if (contextURI != null) {
 			try {
 				uri = UriUtils.encodePath(contextURI, characterEncoding(request));
@@ -249,6 +250,12 @@ public class ProxyRequestHelper {
 			MultiValueMap<String, String> headers) {
 	}
 
+	/**
+	 * Get url encoded query string. Pay special attention to single parameters with no values
+	 * and parameter names with colon (:) from use of UriTemplate.
+	 * @param params Un-encoded request parameters
+	 * @return
+	 */
 	public String getQueryString(MultiValueMap<String, String> params) {
 		if (params.isEmpty()) {
 			return "";
@@ -260,10 +267,21 @@ public class ProxyRequestHelper {
 			for (String value : params.get(param)) {
 				query.append("&");
 				query.append(param);
-				if (!"".equals(value)) {
-					singles.put(param + i, value);
+				if (!"".equals(value)) { // don't add =, if original is ?wsdl, output is not ?wsdl=
+					String key = param;
+					// if form feed is already part of param name double
+					// since form feed is used as the colon replacement below
+					if (key.contains("\f")) {
+						key = (key.replaceAll("\f", "\f\f"));
+					}
+					// colon is special to UriTemplate
+					if (key.contains(":")) {
+						key = key.replaceAll(":", "\f");
+					}
+					key = key + i;
+					singles.put(key, value);
 					query.append("={");
-					query.append(param + i);
+					query.append(key);
 					query.append("}");
 				}
 				i++;

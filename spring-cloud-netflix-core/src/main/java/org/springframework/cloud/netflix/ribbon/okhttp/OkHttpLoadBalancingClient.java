@@ -19,36 +19,57 @@ package org.springframework.cloud.netflix.ribbon.okhttp;
 import java.net.URI;
 import java.util.concurrent.TimeUnit;
 
-import okhttp3.OkHttpClient;
-import okhttp3.Request;
-import okhttp3.Response;
+import org.springframework.cloud.netflix.ribbon.ServerIntrospector;
 import org.springframework.cloud.netflix.ribbon.support.AbstractLoadBalancingClient;
 import org.springframework.web.util.UriComponentsBuilder;
 
 import com.netflix.client.config.CommonClientConfigKey;
 import com.netflix.client.config.IClientConfig;
 import com.netflix.loadbalancer.ILoadBalancer;
+import com.netflix.loadbalancer.Server;
+
+import okhttp3.OkHttpClient;
+import okhttp3.Request;
+import okhttp3.Response;
+
+import static org.springframework.cloud.netflix.ribbon.RibbonUtils.updateToHttpsIfNeeded;
 
 /**
  * @author Spencer Gibb
+ * @author Ryan Baxter
  */
 public class OkHttpLoadBalancingClient
-		extends AbstractLoadBalancingClient<OkHttpRibbonRequest, OkHttpRibbonResponse> {
-	private final OkHttpClient delegate = new OkHttpClient();
+		extends AbstractLoadBalancingClient<OkHttpRibbonRequest, OkHttpRibbonResponse, OkHttpClient> {
 
+	@Deprecated
 	public OkHttpLoadBalancingClient() {
 		super();
 	}
 
+	@Deprecated
 	public OkHttpLoadBalancingClient(final ILoadBalancer lb) {
 		super(lb);
+	}
+
+	public OkHttpLoadBalancingClient(IClientConfig config,
+			ServerIntrospector serverIntrospector) {
+		super(config, serverIntrospector);
+	}
+
+	public OkHttpLoadBalancingClient(OkHttpClient delegate, IClientConfig config,
+									 ServerIntrospector serverIntrospector) {
+		super(delegate, config, serverIntrospector);
+	}
+
+	@Override
+	protected OkHttpClient createDelegate(IClientConfig config) {
+		return new OkHttpClient();
 	}
 
 	@Override
 	public OkHttpRibbonResponse execute(OkHttpRibbonRequest ribbonRequest,
 			final IClientConfig configOverride) throws Exception {
 		boolean secure = isSecure(configOverride);
-
 		if (secure) {
 			final URI secureUri = UriComponentsBuilder.fromUri(ribbonRequest.getUri())
 					.scheme("https").build().toUri();
@@ -56,7 +77,6 @@ public class OkHttpLoadBalancingClient
 		}
 
 		OkHttpClient httpClient = getOkHttpClient(configOverride, secure);
-
 		final Request request = ribbonRequest.toRequest();
 		Response response = httpClient.newCall(request).execute();
 		return new OkHttpRibbonResponse(response, ribbonRequest.getUri());
@@ -64,27 +84,25 @@ public class OkHttpLoadBalancingClient
 
 	OkHttpClient getOkHttpClient(IClientConfig configOverride, boolean secure) {
 		OkHttpClient.Builder builder = this.delegate.newBuilder();
-		if (configOverride != null) {
-			builder.connectTimeout(configOverride.get(
-					CommonClientConfigKey.ConnectTimeout, this.connectTimeout), TimeUnit.MILLISECONDS);
-			builder.readTimeout(configOverride.get(
-					CommonClientConfigKey.ReadTimeout, this.readTimeout), TimeUnit.MILLISECONDS);
-			builder.followRedirects(configOverride.get(
+		IClientConfig config = configOverride != null ? configOverride : this.config;
+		builder.connectTimeout(config.get(
+				CommonClientConfigKey.ConnectTimeout, this.connectTimeout), TimeUnit.MILLISECONDS);
+		builder.readTimeout(config.get(
+				CommonClientConfigKey.ReadTimeout, this.readTimeout), TimeUnit.MILLISECONDS);
+		builder.followRedirects(config.get(
+				CommonClientConfigKey.FollowRedirects, this.followRedirects));
+		if (secure) {
+			builder.followSslRedirects(configOverride.get(
 					CommonClientConfigKey.FollowRedirects, this.followRedirects));
-			if (secure) {
-				builder.followSslRedirects(configOverride.get(
-						CommonClientConfigKey.FollowRedirects, this.followRedirects));
-			}
-		}
-		else {
-			builder.connectTimeout(this.connectTimeout, TimeUnit.MILLISECONDS);
-			builder.readTimeout(this.readTimeout, TimeUnit.MILLISECONDS);
-			builder.followRedirects(this.followRedirects);
-			if (secure) {
-				builder.followSslRedirects(this.followRedirects);
-			}
 		}
 
 		return builder.build();
+	}
+
+	@Override
+	public URI reconstructURIWithServer(Server server, URI original) {
+		URI uri = updateToHttpsIfNeeded(original, this.config, this.serverIntrospector,
+				server);
+		return super.reconstructURIWithServer(server, uri);
 	}
 }

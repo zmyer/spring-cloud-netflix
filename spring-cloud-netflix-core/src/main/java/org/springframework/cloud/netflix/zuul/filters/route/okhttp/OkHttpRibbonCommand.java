@@ -22,18 +22,38 @@ import org.springframework.cloud.netflix.ribbon.okhttp.OkHttpRibbonRequest;
 import org.springframework.cloud.netflix.ribbon.okhttp.OkHttpRibbonResponse;
 import org.springframework.cloud.netflix.zuul.filters.ZuulProperties;
 import org.springframework.cloud.netflix.zuul.filters.route.RibbonCommandContext;
+import org.springframework.cloud.netflix.zuul.filters.route.ZuulFallbackProvider;
 import org.springframework.cloud.netflix.zuul.filters.route.support.AbstractRibbonCommand;
+import com.netflix.client.config.IClientConfig;
 
 /**
  * @author Spencer Gibb
+ * @author Ryan Baxter
  */
 public class OkHttpRibbonCommand extends AbstractRibbonCommand<OkHttpLoadBalancingClient, OkHttpRibbonRequest, OkHttpRibbonResponse> {
 
 	public OkHttpRibbonCommand(final String commandKey,
-							   final OkHttpLoadBalancingClient client, 
-							   final RibbonCommandContext context,
-							   final ZuulProperties zuulProperties) {
+								final OkHttpLoadBalancingClient client,
+								final RibbonCommandContext context,
+								final ZuulProperties zuulProperties) {
 		super(commandKey, client, context, zuulProperties);
+	}
+
+	public OkHttpRibbonCommand(final String commandKey,
+							   final OkHttpLoadBalancingClient client,
+							   final RibbonCommandContext context,
+							   final ZuulProperties zuulProperties,
+							   final ZuulFallbackProvider zuulFallbackProvider) {
+		super(commandKey, client, context, zuulProperties, zuulFallbackProvider);
+	}
+
+	public OkHttpRibbonCommand(final String commandKey,
+							   final OkHttpLoadBalancingClient client,
+							   final RibbonCommandContext context,
+							   final ZuulProperties zuulProperties,
+							   final ZuulFallbackProvider zuulFallbackProvider,
+							   final IClientConfig config) {
+		super(commandKey, client, context, zuulProperties, zuulFallbackProvider, config);
 	}
 
 	@Override

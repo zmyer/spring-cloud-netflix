@@ -18,6 +18,8 @@ package org.springframework.cloud.netflix.feign.support;
 
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
+import java.text.CollationElementIterator;
+import java.util.Collection;
 import java.util.List;
 import java.util.Map;
 
@@ -25,6 +27,7 @@ import org.junit.Before;
 import org.junit.Test;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
+import org.springframework.util.MultiValueMap;
 import org.springframework.util.ReflectionUtils;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -45,6 +48,8 @@ import feign.MethodMetadata;
 import lombok.AllArgsConstructor;
 import lombok.NoArgsConstructor;
 import lombok.ToString;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PostMapping;
 
 /**
  * @author chadjaros
@@ -86,6 +91,21 @@ public class SpringMvcContractTests {
 	@Test
 	public void testProcessAnnotations_Simple() throws Exception {
 		Method method = TestTemplate_Simple.class.getDeclaredMethod("getTest",
+				String.class);
+		MethodMetadata data = this.contract
+				.parseAndValidateMetadata(method.getDeclaringClass(), method);
+
+		assertEquals("/test/{id}", data.template().url());
+		assertEquals("GET", data.template().method());
+		assertEquals(MediaType.APPLICATION_JSON_VALUE,
+				data.template().headers().get("Accept").iterator().next());
+
+		assertEquals("id", data.indexToName().get(0).iterator().next());
+	}
+
+	@Test
+	public void testProcessAnnotations_SimpleGetMapping() throws Exception {
+		Method method = TestTemplate_Simple.class.getDeclaredMethod("getMappingTest",
 				String.class);
 		MethodMetadata data = this.contract
 				.parseAndValidateMetadata(method.getDeclaringClass(), method);
@@ -148,6 +168,20 @@ public class SpringMvcContractTests {
 	@Test
 	public void testProcessAnnotations_SimplePost() throws Exception {
 		Method method = TestTemplate_Simple.class.getDeclaredMethod("postTest",
+				TestObject.class);
+		MethodMetadata data = this.contract
+				.parseAndValidateMetadata(method.getDeclaringClass(), method);
+
+		assertEquals("", data.template().url());
+		assertEquals("POST", data.template().method());
+		assertEquals(MediaType.APPLICATION_JSON_VALUE,
+				data.template().headers().get("Accept").iterator().next());
+
+	}
+
+	@Test
+	public void testProcessAnnotations_SimplePostMapping() throws Exception {
+		Method method = TestTemplate_Simple.class.getDeclaredMethod("postMappingTest",
 				TestObject.class);
 		MethodMetadata data = this.contract
 				.parseAndValidateMetadata(method.getDeclaringClass(), method);
@@ -260,7 +294,20 @@ public class SpringMvcContractTests {
 		assertEquals("/test", data.template().url());
 		assertEquals("GET", data.template().method());
 		assertEquals("[{id}]", data.template().queries().get("id").toString());
-		assertNull(data.indexToExpander().get(0));
+		assertNotNull(data.indexToExpander().get(0));
+	}
+
+	@Test
+	public void testProcessAnnotations_ListParamsWithoutName() throws Exception {
+		Method method = TestTemplate_ListParamsWithoutName.class.getDeclaredMethod("getTest",
+				List.class);
+		MethodMetadata data = this.contract
+				.parseAndValidateMetadata(method.getDeclaringClass(), method);
+
+		assertEquals("/test", data.template().url());
+		assertEquals("GET", data.template().method());
+		assertEquals("[{id}]", data.template().queries().get("id").toString());
+		assertNotNull(data.indexToExpander().get(0));
 	}
 
 	@Test
@@ -340,6 +387,48 @@ public class SpringMvcContractTests {
 		return false;
 	}
 
+	@Test
+	public void testProcessHeaderMap() throws Exception {
+		Method method = TestTemplate_HeaderMap.class.getDeclaredMethod("headerMap",
+				MultiValueMap.class, String.class);
+		MethodMetadata data = this.contract
+				.parseAndValidateMetadata(method.getDeclaringClass(), method);
+
+		assertEquals("/headerMap", data.template().url());
+		assertEquals("GET", data.template().method());
+		assertEquals(0, data.headerMapIndex().intValue());
+		Map<String, Collection<String>> headers = data.template().headers();
+		assertEquals("{aHeader}", headers.get("aHeader").iterator().next());
+	}
+
+	@Test(expected = IllegalStateException.class)
+	public void testProcessHeaderMapMoreThanOnce() throws Exception {
+		Method method = TestTemplate_HeaderMap.class.getDeclaredMethod(
+				"headerMapMoreThanOnce", MultiValueMap.class, MultiValueMap.class);
+		this.contract.parseAndValidateMetadata(method.getDeclaringClass(), method);
+	}
+
+	@Test
+	public void testProcessQueryMap() throws Exception {
+		Method method = TestTemplate_QueryMap.class.getDeclaredMethod("queryMap",
+				MultiValueMap.class, String.class);
+		MethodMetadata data = this.contract
+				.parseAndValidateMetadata(method.getDeclaringClass(), method);
+
+		assertEquals("/queryMap", data.template().url());
+		assertEquals("GET", data.template().method());
+		assertEquals(0, data.queryMapIndex().intValue());
+		Map<String, Collection<String>> params = data.template().queries();
+		assertEquals("{aParam}", params.get("aParam").iterator().next());
+	}
+
+	@Test(expected = IllegalStateException.class)
+	public void testProcessQueryMapMoreThanOnce() throws Exception {
+		Method method = TestTemplate_QueryMap.class.getDeclaredMethod(
+				"queryMapMoreThanOnce", MultiValueMap.class, MultiValueMap.class);
+		this.contract.parseAndValidateMetadata(method.getDeclaringClass(), method);
+	}
+
 	public interface TestTemplate_Simple {
 		@RequestMapping(value = "/test/{id}", method = RequestMethod.GET, produces = MediaType.APPLICATION_JSON_VALUE)
 		ResponseEntity<TestObject> getTest(@PathVariable("id") String id);
@@ -347,8 +436,14 @@ public class SpringMvcContractTests {
 		@RequestMapping(method = RequestMethod.GET, produces = MediaType.APPLICATION_JSON_VALUE)
 		TestObject getTest();
 
+		@GetMapping(value = "/test/{id}", produces = MediaType.APPLICATION_JSON_VALUE)
+		ResponseEntity<TestObject> getMappingTest(@PathVariable("id") String id);
+
 		@RequestMapping(method = RequestMethod.POST, produces = MediaType.APPLICATION_JSON_VALUE)
 		TestObject postTest(@RequestBody TestObject object);
+
+		@PostMapping(produces = MediaType.APPLICATION_JSON_VALUE)
+		TestObject postMappingTest(@RequestBody TestObject object);
 	}
 
 	@RequestMapping("/prepend/{classId}")
@@ -375,9 +470,38 @@ public class SpringMvcContractTests {
 		ResponseEntity<TestObject> getTest(@RequestParam("id") List<String> id);
 	}
 
+	public interface TestTemplate_ListParamsWithoutName {
+		@RequestMapping(value = "/test", method = RequestMethod.GET)
+		ResponseEntity<TestObject> getTest(@RequestParam List<String> id);
+	}
+
 	public interface TestTemplate_MapParams {
 		@RequestMapping(value = "/test", method = RequestMethod.GET)
 		ResponseEntity<TestObject> getTest(@RequestParam Map<String, String> params);
+	}
+
+	public interface TestTemplate_HeaderMap {
+		@RequestMapping(path = "/headerMap")
+		String headerMap(
+				@RequestHeader MultiValueMap<String, String> headerMap,
+				@RequestHeader(name = "aHeader") String aHeader);
+
+		@RequestMapping(path = "/headerMapMoreThanOnce")
+		String headerMapMoreThanOnce(
+				@RequestHeader MultiValueMap<String, String> headerMap1,
+				@RequestHeader MultiValueMap<String, String> headerMap2);
+	}
+
+	public interface TestTemplate_QueryMap {
+		@RequestMapping(path = "/queryMap")
+		String queryMap(
+				@RequestParam MultiValueMap<String, String> queryMap,
+				@RequestParam(name = "aParam") String aParam);
+
+		@RequestMapping(path = "/queryMapMoreThanOnce")
+		String queryMapMoreThanOnce(
+				@RequestParam MultiValueMap<String, String> queryMap1,
+				@RequestParam MultiValueMap<String, String> queryMap2);
 	}
 
 	@JsonAutoDetect
@@ -388,7 +512,7 @@ public class SpringMvcContractTests {
 		@RequestMapping(path = "/test/{id}", method = RequestMethod.PUT, produces = MediaType.APPLICATION_JSON_VALUE)
 		ResponseEntity<TestObject> getTest(@RequestHeader("Authorization") String auth,
 				@PathVariable("id") String id, @RequestParam("amount") Integer amount);
-
+ 
 		@RequestMapping(path = "/test2", method = RequestMethod.PUT, produces = MediaType.APPLICATION_JSON_VALUE)
 		ResponseEntity<TestObject> getTest2(
 				@RequestHeader(name = "Authorization") String auth,
