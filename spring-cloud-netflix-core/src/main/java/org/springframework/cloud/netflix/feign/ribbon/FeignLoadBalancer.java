@@ -28,6 +28,8 @@ import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+
+import org.springframework.cloud.netflix.ribbon.RibbonProperties;
 import org.springframework.cloud.netflix.ribbon.ServerIntrospector;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
@@ -38,16 +40,22 @@ import com.netflix.client.ClientRequest;
 import com.netflix.client.IResponse;
 import com.netflix.client.RequestSpecificRetryHandler;
 import com.netflix.client.RetryHandler;
-import com.netflix.client.config.CommonClientConfigKey;
 import com.netflix.client.config.IClientConfig;
 import com.netflix.loadbalancer.ILoadBalancer;
 import com.netflix.loadbalancer.Server;
 
-import static org.springframework.cloud.netflix.ribbon.RibbonUtils.updateToHttpsIfNeeded;
+import static org.springframework.cloud.netflix.ribbon.RibbonUtils.updateToSecureConnectionIfNeeded;
 
+/**
+ * @author Dave Syer
+ * @author Spencer Gibb
+ * @author Ryan Baxter
+ * @author Tim Ysewyn
+ */
 public class FeignLoadBalancer extends
 		AbstractLoadBalancerAwareClient<FeignLoadBalancer.RibbonRequest, FeignLoadBalancer.RibbonResponse> {
 
+	private final RibbonProperties ribbon;
 	protected int connectTimeout;
 	protected int readTimeout;
 	protected IClientConfig clientConfig;
@@ -58,8 +66,10 @@ public class FeignLoadBalancer extends
 		super(lb, clientConfig);
 		this.setRetryHandler(RetryHandler.DEFAULT);
 		this.clientConfig = clientConfig;
-		this.connectTimeout = clientConfig.get(CommonClientConfigKey.ConnectTimeout);
-		this.readTimeout = clientConfig.get(CommonClientConfigKey.ReadTimeout);
+		this.ribbon = RibbonProperties.from(clientConfig);
+		RibbonProperties ribbon = this.ribbon;
+		this.connectTimeout = ribbon.getConnectTimeout();
+		this.readTimeout = ribbon.getReadTimeout();
 		this.serverIntrospector = serverIntrospector;
 	}
 
@@ -68,11 +78,10 @@ public class FeignLoadBalancer extends
 			throws IOException {
 		Request.Options options;
 		if (configOverride != null) {
+			RibbonProperties override = RibbonProperties.from(configOverride);
 			options = new Request.Options(
-					configOverride.get(CommonClientConfigKey.ConnectTimeout,
-							this.connectTimeout),
-					(configOverride.get(CommonClientConfigKey.ReadTimeout,
-							this.readTimeout)));
+					override.connectTimeout(this.connectTimeout),
+					override.readTimeout(this.readTimeout));
 		}
 		else {
 			options = new Request.Options(this.connectTimeout, this.readTimeout);
@@ -84,8 +93,7 @@ public class FeignLoadBalancer extends
 	@Override
 	public RequestSpecificRetryHandler getRequestSpecificRetryHandler(
 			RibbonRequest request, IClientConfig requestConfig) {
-		if (this.clientConfig.get(CommonClientConfigKey.OkToRetryOnAllOperations,
-				false)) {
+		if (this.ribbon.isOkToRetryOnAllOperations()) {
 			return new RequestSpecificRetryHandler(true, true, this.getRetryHandler(),
 					requestConfig);
 		}
@@ -101,11 +109,11 @@ public class FeignLoadBalancer extends
 
 	@Override
 	public URI reconstructURIWithServer(Server server, URI original) {
-		URI uri = updateToHttpsIfNeeded(original, this.clientConfig, this.serverIntrospector, server);
+		URI uri = updateToSecureConnectionIfNeeded(original, this.clientConfig, this.serverIntrospector, server);
 		return super.reconstructURIWithServer(server, uri);
 	}
 
-	static class RibbonRequest extends ClientRequest implements Cloneable {
+	protected static class RibbonRequest extends ClientRequest implements Cloneable {
 
 		private final Request request;
 		private final Client client;
@@ -138,13 +146,18 @@ public class FeignLoadBalancer extends
 				}
 
 				@Override
+				public String getMethodValue() {
+					return getMethod().name();
+				}
+
+				@Override
 				public URI getURI() {
 					return RibbonRequest.this.getUri();
 				}
 
 				@Override
 				public HttpHeaders getHeaders() {
-					Map<String, List<String>> headers = new HashMap<String, List<String>>();
+					Map<String, List<String>> headers = new HashMap<>();
 					Map<String, Collection<String>> feignHeaders = RibbonRequest.this.toRequest().headers();
 					for(String key : feignHeaders.keySet()) {
 						headers.put(key, new ArrayList<String>(feignHeaders.get(key)));
@@ -164,7 +177,7 @@ public class FeignLoadBalancer extends
 		}
 	}
 
-	static class RibbonResponse implements IResponse {
+	protected static class RibbonResponse implements IResponse {
 
 		private final URI uri;
 		private final Response response;

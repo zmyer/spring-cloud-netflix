@@ -1,5 +1,5 @@
 /*
- * Copyright 2013-2015 the original author or authors.
+ * Copyright 2013-2017 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,18 +16,18 @@
 
 package org.springframework.cloud.netflix.turbine.stream;
 
+import java.util.Objects;
+
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.cloud.netflix.hystrix.HystrixConstants;
 import org.springframework.http.MediaType;
 
-import lombok.Data;
-
 /**
  * @author Dave Syer
+ * @author Gregor Zurowski
  */
 @ConfigurationProperties("turbine.stream")
-@Data
 public class TurbineStreamProperties {
 
 	@Value("${server.port:8989}")
@@ -36,4 +36,52 @@ public class TurbineStreamProperties {
 	private String destination = HystrixConstants.HYSTRIX_STREAM_DESTINATION;
 
 	private String contentType = MediaType.APPLICATION_JSON_VALUE;
+
+	public int getPort() {
+		return port;
+	}
+
+	public void setPort(int port) {
+		this.port = port;
+	}
+
+	public String getDestination() {
+		return destination;
+	}
+
+	public void setDestination(String destination) {
+		this.destination = destination;
+	}
+
+	public String getContentType() {
+		return contentType;
+	}
+
+	public void setContentType(String contentType) {
+		this.contentType = contentType;
+	}
+
+	@Override
+	public boolean equals(Object o) {
+		if (this == o)
+			return true;
+		if (o == null || getClass() != o.getClass())
+			return false;
+		TurbineStreamProperties that = (TurbineStreamProperties) o;
+		return port == that.port && Objects.equals(destination, that.destination)
+				&& Objects.equals(contentType, that.contentType);
+	}
+
+	@Override
+	public int hashCode() {
+		return Objects.hash(port, destination, contentType);
+	}
+
+	@Override
+	public String toString() {
+		return new StringBuilder("TurbineStreamProperties{").append("port=").append(port)
+				.append(", ").append("destination='").append(destination).append("', ")
+				.append("contentType='").append(contentType).append("'}").toString();
+	}
+
 }

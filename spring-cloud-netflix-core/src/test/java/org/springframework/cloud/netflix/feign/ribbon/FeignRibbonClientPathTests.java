@@ -24,7 +24,6 @@ import org.junit.runner.RunWith;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.EnableAutoConfiguration;
-import org.springframework.boot.builder.SpringApplicationBuilder;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.context.SpringBootTest.WebEnvironment;
 import org.springframework.cloud.netflix.feign.EnableFeignClients;
@@ -41,10 +40,6 @@ import org.springframework.web.bind.annotation.RestController;
 
 import com.netflix.loadbalancer.Server;
 import com.netflix.loadbalancer.ServerList;
-
-import lombok.AllArgsConstructor;
-import lombok.Data;
-import lombok.NoArgsConstructor;
 
 /**
  * @author Venil Noronha
@@ -117,13 +112,6 @@ public class FeignRibbonClientPathTests {
 			return new Hello("hello world");
 		}
 
-		public static void main(String[] args) throws InterruptedException {
-			new SpringApplicationBuilder(Application.class).properties(
-				"spring.application.name=feignribbonclientpathtest",
-				"management.contextPath=/admin"
-			).run(args);
-		}
-
 	}
 
 	@Test
@@ -158,11 +146,22 @@ public class FeignRibbonClientPathTests {
 				hello.getMessage());
 	}
 
-	@Data
-	@AllArgsConstructor
-	@NoArgsConstructor
 	public static class Hello {
 		private String message;
+
+		public Hello() {}
+
+		public Hello(String message) {
+			this.message = message;
+		}
+
+		public String getMessage() {
+			return message;
+		}
+
+		public void setMessage(String message) {
+			this.message = message;
+		}
 	}
 
 	@Configuration

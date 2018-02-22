@@ -1,5 +1,5 @@
 /*
- * Copyright 2013-2015 the original author or authors.
+ * Copyright 2013-2017 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,12 +16,14 @@
 
 package org.springframework.cloud.netflix.feign.encoding;
 
+import feign.Client;
 import feign.Feign;
-import feign.httpclient.ApacheHttpClient;
+import okhttp3.OkHttpClient;
 
 import org.springframework.boot.autoconfigure.AutoConfigureAfter;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnClass;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.cloud.netflix.feign.FeignAutoConfiguration;
@@ -37,13 +39,16 @@ import org.springframework.context.annotation.Configuration;
 @Configuration
 @EnableConfigurationProperties(FeignClientEncodingProperties.class)
 @ConditionalOnClass(Feign.class)
-@ConditionalOnBean(ApacheHttpClient.class)
+@ConditionalOnBean(Client.class)
+//The OK HTTP client uses "transparent" compression.
+//If the content-encoding header is present it disable transparent compression
+@ConditionalOnMissingBean(OkHttpClient.class)
 @ConditionalOnProperty(value = "feign.compression.request.enabled", matchIfMissing = false)
 @AutoConfigureAfter(FeignAutoConfiguration.class)
 public class FeignContentGzipEncodingAutoConfiguration {
 
-    @Bean
-    public FeignContentGzipEncodingInterceptor feignContentGzipEncodingInterceptor(FeignClientEncodingProperties properties) {
-        return new FeignContentGzipEncodingInterceptor(properties);
-    }
+	@Bean
+	public FeignContentGzipEncodingInterceptor feignContentGzipEncodingInterceptor(FeignClientEncodingProperties properties) {
+		return new FeignContentGzipEncodingInterceptor(properties);
+	}
 }

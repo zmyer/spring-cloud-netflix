@@ -1,5 +1,5 @@
 /*
- * Copyright 2013-2015 the original author or authors.
+ * Copyright 2013-2017 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,10 +16,24 @@
 
 package org.springframework.cloud.netflix.turbine.stream;
 
+import java.nio.charset.StandardCharsets;
 import java.util.Collections;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+
+import io.netty.buffer.ByteBuf;
+import io.netty.buffer.Unpooled;
+import io.reactivex.netty.RxNetty;
+import io.reactivex.netty.protocol.http.server.HttpServer;
+import io.reactivex.netty.protocol.http.sse.ServerSentEvent;
+
+import com.netflix.turbine.aggregator.InstanceKey;
+import com.netflix.turbine.aggregator.StreamAggregator;
+import com.netflix.turbine.internal.JsonUtility;
+
+import org.apache.commons.logging.Log;
+import org.apache.commons.logging.LogFactory;
 
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
@@ -29,27 +43,20 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.util.SocketUtils;
 
-import com.netflix.turbine.aggregator.InstanceKey;
-import com.netflix.turbine.aggregator.StreamAggregator;
-import com.netflix.turbine.internal.JsonUtility;
+import static io.reactivex.netty.pipeline.PipelineConfigurators.serveSseConfigurator;
 
-import static io.reactivex.netty.pipeline.PipelineConfigurators.sseServerConfigurator;
-
-import io.netty.buffer.ByteBuf;
-import io.reactivex.netty.RxNetty;
-import io.reactivex.netty.protocol.http.server.HttpServer;
-import io.reactivex.netty.protocol.text.sse.ServerSentEvent;
-import lombok.extern.apachecommons.CommonsLog;
 import rx.Observable;
 import rx.subjects.PublishSubject;
 
 /**
  * @author Spencer Gibb
+ * @author Daniel Lavoie
  */
 @Configuration
-@CommonsLog
 @EnableConfigurationProperties(TurbineStreamProperties.class)
 public class TurbineStreamConfiguration implements SmartLifecycle {
+
+	private static final Log log = LogFactory.getLog(TurbineStreamConfiguration.class);
 
 	private AtomicBoolean running = new AtomicBoolean(false);
 
@@ -94,12 +101,15 @@ public class TurbineStreamConfiguration implements SmartLifecycle {
 				.createHttpServer(this.turbinePort, (request, response) -> {
 					log.info("SSE Request Received");
 					response.getHeaders().setHeader("Content-Type", "text/event-stream");
-					return output
-							.doOnUnsubscribe(() -> log
-									.info("Unsubscribing RxNetty server connection"))
+					return output.doOnUnsubscribe(
+							() -> log.info("Unsubscribing RxNetty server connection"))
 							.flatMap(data -> response.writeAndFlush(new ServerSentEvent(
-									null, null, JsonUtility.mapToJson(data))));
-				}, sseServerConfigurator());
+									null,
+									Unpooled.copiedBuffer("message",
+											StandardCharsets.UTF_8),
+									Unpooled.copiedBuffer(JsonUtility.mapToJson(data)+"\n",
+											StandardCharsets.UTF_8))));
+				}, serveSseConfigurator());
 		return httpServer;
 	}
 

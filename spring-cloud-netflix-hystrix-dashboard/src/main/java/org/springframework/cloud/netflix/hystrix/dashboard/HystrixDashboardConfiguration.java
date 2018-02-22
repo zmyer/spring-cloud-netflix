@@ -1,5 +1,5 @@
 /*
- * Copyright 2013-2015 the original author or authors.
+ * Copyright 2013-2017 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -26,8 +26,8 @@ import javax.servlet.http.HttpServlet;
 import javax.servlet.http.HttpServletRequest;
 import javax.servlet.http.HttpServletResponse;
 
-import lombok.extern.apachecommons.CommonsLog;
-
+import org.apache.commons.logging.Log;
+import org.apache.commons.logging.LogFactory;
 import org.apache.http.Header;
 import org.apache.http.HttpResponse;
 import org.apache.http.HttpStatus;
@@ -52,6 +52,7 @@ import org.springframework.web.servlet.view.freemarker.FreeMarkerConfigurer;
 /**
  * @author Dave Syer
  * @author Roy Clarkson
+ * @author Fahim Farook
  */
 @Configuration
 @EnableConfigurationProperties(HystrixDashboardProperties.class)
@@ -87,10 +88,13 @@ public class HystrixDashboardConfiguration {
 
 	@Bean
 	public ServletRegistrationBean proxyStreamServlet() {
-		ProxyStreamServlet proxyStreamServlet = new ProxyStreamServlet();
-		proxyStreamServlet.setEnableIgnoreConnectionCloseHeader(dashboardProperties
-				.isEnableIgnoreConnectionCloseHeader());
-		return new ServletRegistrationBean(proxyStreamServlet, "/proxy.stream");
+		final ProxyStreamServlet proxyStreamServlet = new ProxyStreamServlet();
+		proxyStreamServlet.setEnableIgnoreConnectionCloseHeader(
+				this.dashboardProperties.isEnableIgnoreConnectionCloseHeader());
+		final ServletRegistrationBean registration = new ServletRegistrationBean(
+				proxyStreamServlet, "/proxy.stream");
+		registration.setInitParameters(this.dashboardProperties.getInitParameters());
+		return registration;
 	}
 
 	@Bean
@@ -103,8 +107,9 @@ public class HystrixDashboardConfiguration {
 	 * not yet support CORS (https://bugs.webkit.org/show_bug.cgi?id=61862) so that a UI
 	 * can request a stream from a different server.
 	 */
-	@CommonsLog
 	public static class ProxyStreamServlet extends HttpServlet {
+
+		private static final Log log = LogFactory.getLog(ProxyStreamServlet.class);
 
 		private static final long serialVersionUID = 1L;
 
@@ -134,6 +139,7 @@ public class HystrixDashboardConfiguration {
 				response.getWriter()
 						.println(
 								"Required parameter 'origin' missing. Example: 107.20.175.135:7001");
+				return;
 			}
 			origin = origin.trim();
 

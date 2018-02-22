@@ -22,7 +22,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
-import org.springframework.boot.context.embedded.EmbeddedServletContainerInitializedEvent;
+import org.springframework.boot.web.servlet.context.ServletWebServerInitializedEvent;
 import org.springframework.cloud.client.discovery.event.InstanceRegisteredEvent;
 import org.springframework.cloud.client.serviceregistry.AutoServiceRegistration;
 import org.springframework.context.ApplicationContext;
@@ -36,6 +36,7 @@ import org.springframework.core.Ordered;
  * @author Spencer Gibb
  * @author Jon Schneider
  * @author Jakub Narloch
+ * @author raiyan
  */
 public class EurekaAutoServiceRegistration implements AutoServiceRegistration, SmartLifecycle, Ordered {
 
@@ -61,9 +62,15 @@ public class EurekaAutoServiceRegistration implements AutoServiceRegistration, S
 
 	@Override
 	public void start() {
-		// only set the port if the nonSecurePort is 0 and this.port != 0
-		if (this.port.get() != 0 && this.registration.getNonSecurePort() == 0) {
-			this.registration.setNonSecurePort(this.port.get());
+		// only set the port if the nonSecurePort or securePort is 0 and this.port != 0
+		if (this.port.get() != 0) {
+			if (this.registration.getNonSecurePort() == 0) {
+				this.registration.setNonSecurePort(this.port.get());
+			}
+
+			if (this.registration.getSecurePort() == 0 && this.registration.isSecure()) {
+				this.registration.setSecurePort(this.port.get());
+			}
 		}
 
 		// only initialize if nonSecurePort is greater than 0 and it isn't already running
@@ -109,10 +116,10 @@ public class EurekaAutoServiceRegistration implements AutoServiceRegistration, S
 		return this.order;
 	}
 
-	@EventListener(EmbeddedServletContainerInitializedEvent.class)
-	public void onApplicationEvent(EmbeddedServletContainerInitializedEvent event) {
-		// TODO: take SSL into account when Spring Boot 1.2 is available
-		int localPort = event.getEmbeddedServletContainer().getPort();
+	@EventListener(ServletWebServerInitializedEvent.class)
+	public void onApplicationEvent(ServletWebServerInitializedEvent event) {
+		// TODO: take SSL into account
+		int localPort = event.getWebServer().getPort();
 		if (this.port.get() == 0) {
 			log.info("Updating port to " + localPort);
 			this.port.compareAndSet(0, localPort);
@@ -122,8 +129,9 @@ public class EurekaAutoServiceRegistration implements AutoServiceRegistration, S
 
 	@EventListener(ContextClosedEvent.class)
 	public void onApplicationEvent(ContextClosedEvent event) {
-		// register in case meta data changed
-		stop();
+		if( event.getApplicationContext() == context ) {
+			stop();
+		}
 	}
 
 }

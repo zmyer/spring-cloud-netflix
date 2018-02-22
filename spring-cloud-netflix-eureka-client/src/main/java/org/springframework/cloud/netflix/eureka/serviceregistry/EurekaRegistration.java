@@ -17,12 +17,18 @@
 
 package org.springframework.cloud.netflix.eureka.serviceregistry;
 
+import java.io.Closeable;
+import java.io.IOException;
+import java.net.URI;
+import java.util.Map;
 import java.util.concurrent.atomic.AtomicReference;
 
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 import org.springframework.aop.framework.Advised;
 import org.springframework.aop.support.AopUtils;
+import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.cloud.client.DefaultServiceInstance;
 import org.springframework.cloud.client.serviceregistry.Registration;
 import org.springframework.cloud.netflix.eureka.CloudEurekaClient;
 import org.springframework.cloud.netflix.eureka.CloudEurekaInstanceConfig;
@@ -39,16 +45,16 @@ import com.netflix.discovery.EurekaClientConfig;
 /**
  * @author Spencer Gibb
  */
-public class EurekaRegistration implements Registration {
+public class EurekaRegistration implements Registration, Closeable {
 	private static final Log log = LogFactory.getLog(EurekaRegistration.class);
 
 	private final EurekaClient eurekaClient;
 	private final AtomicReference<CloudEurekaClient> cloudEurekaClient = new AtomicReference<>();
 	private final CloudEurekaInstanceConfig instanceConfig;
 	private final ApplicationInfoManager applicationInfoManager;
-	private HealthCheckHandler healthCheckHandler;
+	private ObjectProvider<HealthCheckHandler> healthCheckHandler;
 
-	private EurekaRegistration(CloudEurekaInstanceConfig instanceConfig, EurekaClient eurekaClient, ApplicationInfoManager applicationInfoManager, HealthCheckHandler healthCheckHandler) {
+	private EurekaRegistration(CloudEurekaInstanceConfig instanceConfig, EurekaClient eurekaClient, ApplicationInfoManager applicationInfoManager, ObjectProvider<HealthCheckHandler> healthCheckHandler) {
 		this.eurekaClient = eurekaClient;
 		this.instanceConfig = instanceConfig;
 		this.applicationInfoManager = applicationInfoManager;
@@ -63,7 +69,7 @@ public class EurekaRegistration implements Registration {
 		private final CloudEurekaInstanceConfig instanceConfig;
 		private ApplicationInfoManager applicationInfoManager;
 		private EurekaClient eurekaClient;
-		private HealthCheckHandler healthCheckHandler;
+		private ObjectProvider<HealthCheckHandler> healthCheckHandler;
 
 		private EurekaClientConfig clientConfig;
 		private ApplicationEventPublisher publisher;
@@ -82,7 +88,7 @@ public class EurekaRegistration implements Registration {
 			return this;
 		}
 
-		public Builder with(HealthCheckHandler healthCheckHandler) {
+		public Builder with(ObjectProvider<HealthCheckHandler> healthCheckHandler) {
 			this.healthCheckHandler = healthCheckHandler;
 			return this;
 		}
@@ -116,6 +122,34 @@ public class EurekaRegistration implements Registration {
 		return this.instanceConfig.getAppname();
 	}
 
+	@Override
+	public String getHost() {
+		return this.instanceConfig.getHostName(false);
+	}
+
+	@Override
+	public int getPort() {
+		if (this.instanceConfig.getSecurePortEnabled()) {
+			return this.instanceConfig.getSecurePort();
+		}
+		return this.instanceConfig.getNonSecurePort();
+	}
+
+	@Override
+	public boolean isSecure() {
+		return this.instanceConfig.getSecurePortEnabled();
+	}
+
+	@Override
+	public URI getUri() {
+		return DefaultServiceInstance.getUri(this);
+	}
+
+	@Override
+	public Map<String, String> getMetadata() {
+		return this.instanceConfig.getMetadataMap();
+	}
+
 	public CloudEurekaClient getEurekaClient() {
 		if (this.cloudEurekaClient.get() == null) {
 			try {
@@ -144,11 +178,11 @@ public class EurekaRegistration implements Registration {
 		return applicationInfoManager;
 	}
 
-	public HealthCheckHandler getHealthCheckHandler() {
+	public ObjectProvider<HealthCheckHandler> getHealthCheckHandler() {
 		return healthCheckHandler;
 	}
 
-	public void setHealthCheckHandler(HealthCheckHandler healthCheckHandler) {
+	public void setHealthCheckHandler(ObjectProvider<HealthCheckHandler> healthCheckHandler) {
 		this.healthCheckHandler = healthCheckHandler;
 	}
 
@@ -158,5 +192,18 @@ public class EurekaRegistration implements Registration {
 
 	public int getNonSecurePort() {
 		return this.instanceConfig.getNonSecurePort();
+	}
+
+	public void setSecurePort(int port) {
+		this.instanceConfig.setSecurePort(port);
+	}
+
+	public int getSecurePort() {
+		return this.instanceConfig.getSecurePort();
+	}
+
+	@Override
+	public void close() throws IOException {
+		this.eurekaClient.shutdown();
 	}
 }

@@ -21,11 +21,8 @@ import java.io.IOException;
 
 import org.springframework.beans.BeansException;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.actuate.metrics.repository.InMemoryMetricRepository;
 import org.springframework.boot.autoconfigure.EnableAutoConfiguration;
-import org.springframework.boot.builder.SpringApplicationBuilder;
 import org.springframework.cloud.client.discovery.DiscoveryClient;
-import org.springframework.cloud.client.discovery.EnableDiscoveryClient;
 import org.springframework.cloud.client.serviceregistry.ServiceRegistry;
 import org.springframework.cloud.commons.util.InetUtils;
 import org.springframework.cloud.netflix.eureka.EurekaClientConfigBean;
@@ -48,7 +45,6 @@ import static org.springframework.web.bind.annotation.RequestMethod.POST;
 @ComponentScan
 @EnableAutoConfiguration
 @RestController
-@EnableDiscoveryClient
 public class EurekaSampleApplication implements ApplicationContextAware, Closeable {
 
 	@Autowired
@@ -68,11 +64,6 @@ public class EurekaSampleApplication implements ApplicationContextAware, Closeab
 	private EurekaRegistration registration;
 
 	@Bean
-	public InMemoryMetricRepository inMemoryMetricRepository() {
-		return new InMemoryMetricRepository();
-	}
-
-	@Bean
 	public HealthCheckHandler healthCheckHandler() {
 		return new HealthCheckHandler() {
 			@Override
@@ -85,16 +76,12 @@ public class EurekaSampleApplication implements ApplicationContextAware, Closeab
 
 	@RequestMapping("/")
 	public String home() {
-		return "Hello world "+discoveryClient.getLocalServiceInstance().getUri();
+		return "Hello world "+ registration.getUri();
 	}
 
 	@Override
 	public void setApplicationContext(ApplicationContext context) throws BeansException {
 		this.context = context;
-	}
-
-	public static void main(String[] args) {
-		new SpringApplicationBuilder(EurekaSampleApplication.class).web(true).run(args);
 	}
 
 	@RequestMapping(path = "/register", method = POST)

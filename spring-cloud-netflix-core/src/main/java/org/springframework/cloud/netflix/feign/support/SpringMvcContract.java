@@ -76,7 +76,7 @@ public class SpringMvcContract extends Contract.BaseContract
 	private ResourceLoader resourceLoader = new DefaultResourceLoader();
 
 	public SpringMvcContract() {
-		this(Collections.<AnnotatedParameterProcessor> emptyList());
+		this(Collections.emptyList());
 	}
 
 	public SpringMvcContract(
@@ -249,7 +249,6 @@ public class SpringMvcContract extends Contract.BaseContract
 
 	private void parseProduces(MethodMetadata md, Method method,
 			RequestMapping annotation) {
-		checkAtMostOne(method, annotation.produces(), "produces");
 		String[] serverProduces = annotation.produces();
 		String clientAccepts = serverProduces.length == 0 ? null
 				: emptyToNull(serverProduces[0]);
@@ -260,7 +259,6 @@ public class SpringMvcContract extends Contract.BaseContract
 
 	private void parseConsumes(MethodMetadata md, Method method,
 			RequestMapping annotation) {
-		checkAtMostOne(method, annotation.consumes(), "consumes");
 		String[] serverConsumes = annotation.consumes();
 		String clientProduces = serverConsumes.length == 0 ? null
 				: emptyToNull(serverConsumes[0]);
@@ -275,8 +273,10 @@ public class SpringMvcContract extends Contract.BaseContract
 		if (annotation.headers() != null && annotation.headers().length > 0) {
 			for (String header : annotation.headers()) {
 				int index = header.indexOf('=');
-				md.template().header(resolve(header.substring(0, index)),
+				if (!header.contains("!=") && index >= 0) {
+					md.template().header(resolve(header.substring(0, index)),
 						resolve(header.substring(index + 1).trim()));
+				}
 			}
 		}
 	}

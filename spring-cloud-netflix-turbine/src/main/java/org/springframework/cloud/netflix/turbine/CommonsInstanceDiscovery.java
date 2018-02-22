@@ -1,5 +1,5 @@
 /*
- * Copyright 2013-2016 the original author or authors.
+ * Copyright 2013-2017 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -21,6 +21,8 @@ import java.util.Collection;
 import java.util.List;
 import java.util.Map;
 
+import org.apache.commons.logging.Log;
+import org.apache.commons.logging.LogFactory;
 import org.springframework.cloud.client.ServiceInstance;
 import org.springframework.cloud.client.discovery.DiscoveryClient;
 import org.springframework.expression.Expression;
@@ -29,8 +31,6 @@ import org.springframework.expression.spel.support.StandardEvaluationContext;
 
 import com.netflix.turbine.discovery.Instance;
 import com.netflix.turbine.discovery.InstanceDiscovery;
-
-import lombok.extern.apachecommons.CommonsLog;
 
 /**
  * Class that encapsulates an {@link InstanceDiscovery}
@@ -45,8 +45,9 @@ import lombok.extern.apachecommons.CommonsLog;
  *
  * @author Spencer Gibb
  */
-@CommonsLog
 public class CommonsInstanceDiscovery implements InstanceDiscovery {
+
+	private static final Log log = LogFactory.getLog(CommonsInstanceDiscovery.class);
 
 	private static final String DEFAULT_CLUSTER_NAME_EXPRESSION = "serviceId";
 	protected static final String PORT_KEY = "port";
@@ -94,7 +95,7 @@ public class CommonsInstanceDiscovery implements InstanceDiscovery {
 	@Override
 	public Collection<Instance> getInstanceList() throws Exception {
 		List<Instance> instances = new ArrayList<>();
-		List<String> appNames = getTurbineProperties().getAppConfigList();
+		List<String> appNames = getApplications();
 		if (appNames == null || appNames.size() == 0) {
 			log.info("No apps configured, returning an empty instance list");
 			return instances;
@@ -117,6 +118,10 @@ public class CommonsInstanceDiscovery implements InstanceDiscovery {
 			}
 		}
 		return instances;
+	}
+
+	protected List<String> getApplications() {
+		return turbineProperties.getAppConfigList();
 	}
 
 	/**
@@ -157,8 +162,8 @@ public class CommonsInstanceDiscovery implements InstanceDiscovery {
 	 */
 	Instance marshall(ServiceInstance serviceInstance) {
 		String hostname = serviceInstance.getHost();
-        	String managementPort = serviceInstance.getMetadata().get("management.port");
-        	String port = managementPort == null ? String.valueOf(serviceInstance.getPort()) : managementPort;
+			String managementPort = serviceInstance.getMetadata().get("management.port");
+			String port = managementPort == null ? String.valueOf(serviceInstance.getPort()) : managementPort;
 		String cluster = getClusterName(serviceInstance);
 		Boolean status = Boolean.TRUE; //TODO: where to get?
 		if (hostname != null && cluster != null && status != null) {

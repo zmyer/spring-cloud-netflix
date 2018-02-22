@@ -20,10 +20,14 @@ import javax.annotation.PostConstruct;
 import javax.inject.Provider;
 
 import com.netflix.discovery.EurekaClient;
+import org.apache.commons.logging.Log;
+import org.apache.commons.logging.LogFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.cloud.netflix.ribbon.PropertiesFactory;
+import org.springframework.cloud.netflix.ribbon.RibbonClientName;
+import org.springframework.cloud.netflix.ribbon.RibbonUtils;
 import org.springframework.cloud.netflix.ribbon.ServerIntrospector;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -39,12 +43,6 @@ import com.netflix.loadbalancer.ServerList;
 import com.netflix.niws.loadbalancer.DiscoveryEnabledNIWSServerList;
 import com.netflix.niws.loadbalancer.NIWSDiscoveryPing;
 
-import static com.netflix.client.config.CommonClientConfigKey.DeploymentContextBasedVipAddresses;
-import static com.netflix.client.config.CommonClientConfigKey.EnableZoneAffinity;
-import static org.springframework.cloud.netflix.ribbon.RibbonUtils.setRibbonProperty;
-
-import lombok.extern.apachecommons.CommonsLog;
-
 /**
  * Preprocessor that configures defaults for eureka-discovered ribbon clients. Such as:
  * <code>@zone</code>, NIWSServerListClassName, DeploymentContextBasedVipAddresses,
@@ -55,13 +53,14 @@ import lombok.extern.apachecommons.CommonsLog;
  * @author Ryan Baxter
  */
 @Configuration
-@CommonsLog
 public class EurekaRibbonClientConfiguration {
+
+	private static final Log log = LogFactory.getLog(EurekaRibbonClientConfiguration.class);
 
 	@Value("${ribbon.eureka.approximateZoneFromHostname:false}")
 	private boolean approximateZoneFromHostname = false;
 
-	@Value("${ribbon.client.name}")
+	@RibbonClientName
 	private String serviceId = "client";
 
 	@Autowired(required = false)
@@ -144,9 +143,7 @@ public class EurekaRibbonClientConfiguration {
 				}
 			}
 		}
-		setRibbonProperty(this.serviceId, DeploymentContextBasedVipAddresses.key(),
-				this.serviceId);
-		setRibbonProperty(this.serviceId, EnableZoneAffinity.key(), "true");
+		RibbonUtils.initializeRibbonDefaults(serviceId);
 	}
 
 }

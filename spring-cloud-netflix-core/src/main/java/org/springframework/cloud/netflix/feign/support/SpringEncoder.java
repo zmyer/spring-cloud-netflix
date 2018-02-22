@@ -1,5 +1,5 @@
 /*
- * Copyright 2013-2015 the original author or authors.
+ * Copyright 2013-2017 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -12,6 +12,7 @@
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
+ *
  */
 
 package org.springframework.cloud.netflix.feign.support;
@@ -23,8 +24,10 @@ import java.lang.reflect.Type;
 import java.nio.charset.Charset;
 import java.util.Collection;
 
+import org.apache.commons.logging.Log;
+import org.apache.commons.logging.LogFactory;
 import org.springframework.beans.factory.ObjectFactory;
-import org.springframework.boot.autoconfigure.web.HttpMessageConverters;
+import org.springframework.boot.autoconfigure.http.HttpMessageConverters;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpOutputMessage;
 import org.springframework.http.MediaType;
@@ -34,7 +37,6 @@ import org.springframework.http.converter.HttpMessageConverter;
 import feign.RequestTemplate;
 import feign.codec.EncodeException;
 import feign.codec.Encoder;
-import lombok.extern.apachecommons.CommonsLog;
 
 import static org.springframework.cloud.netflix.feign.support.FeignUtils.getHeaders;
 import static org.springframework.cloud.netflix.feign.support.FeignUtils.getHttpHeaders;
@@ -42,8 +44,9 @@ import static org.springframework.cloud.netflix.feign.support.FeignUtils.getHttp
 /**
  * @author Spencer Gibb
  */
-@CommonsLog
 public class SpringEncoder implements Encoder {
+
+	private static final Log log = LogFactory.getLog(SpringEncoder.class);
 
 	private ObjectFactory<HttpMessageConverters> messageConverters;
 

@@ -17,7 +17,6 @@
 package org.springframework.cloud.netflix.feign;
 
 import java.io.IOException;
-import java.lang.annotation.Annotation;
 import java.net.MalformedURLException;
 import java.net.URI;
 import java.net.URISyntaxException;
@@ -28,7 +27,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
-import org.springframework.beans.factory.BeanClassLoaderAware;
 import org.springframework.beans.factory.annotation.AnnotatedBeanDefinition;
 import org.springframework.beans.factory.config.BeanDefinition;
 import org.springframework.beans.factory.config.BeanDefinitionHolder;
@@ -36,7 +34,6 @@ import org.springframework.beans.factory.support.AbstractBeanDefinition;
 import org.springframework.beans.factory.support.BeanDefinitionBuilder;
 import org.springframework.beans.factory.support.BeanDefinitionReaderUtils;
 import org.springframework.beans.factory.support.BeanDefinitionRegistry;
-import org.springframework.context.ConfigurableApplicationContext;
 import org.springframework.context.EnvironmentAware;
 import org.springframework.context.ResourceLoaderAware;
 import org.springframework.context.annotation.ClassPathScanningCandidateComponentProvider;
@@ -59,16 +56,15 @@ import org.springframework.util.StringUtils;
  * @author Spencer Gibb
  * @author Jakub Narloch
  * @author Venil Noronha
+ * @author Gang Li
  */
 class FeignClientsRegistrar implements ImportBeanDefinitionRegistrar,
-		ResourceLoaderAware, BeanClassLoaderAware, EnvironmentAware {
+		ResourceLoaderAware, EnvironmentAware {
 
 	// patterned after Spring Integration IntegrationComponentScanRegistrar
 	// and RibbonClientsConfigurationRegistgrar
 
 	private ResourceLoader resourceLoader;
-
-	private ClassLoader classLoader;
 
 	private Environment environment;
 
@@ -78,11 +74,6 @@ class FeignClientsRegistrar implements ImportBeanDefinitionRegistrar,
 	@Override
 	public void setResourceLoader(ResourceLoader resourceLoader) {
 		this.resourceLoader = resourceLoader;
-	}
-
-	@Override
-	public void setBeanClassLoader(ClassLoader classLoader) {
-		this.classLoader = classLoader;
 	}
 
 	@Override
@@ -206,7 +197,15 @@ class FeignClientsRegistrar implements ImportBeanDefinitionRegistrar,
 	private void validate(Map<String, Object> attributes) {
 		AnnotationAttributes annotation = AnnotationAttributes.fromMap(attributes);
 		// This blows up if an aliased property is overspecified
-		annotation.getAliasedString("name", FeignClient.class, null);
+		// FIXME annotation.getAliasedString("name", FeignClient.class, null);
+		Assert.isTrue(
+			!annotation.getClass("fallback").isInterface(),
+			"Fallback class must implement the interface annotated by @FeignClient"
+		);
+		Assert.isTrue(
+			!annotation.getClass("fallbackFactory").isInterface(),
+			"Fallback factory must produce instances of fallback classes that implement the interface annotated by @FeignClient"
+		);
 	}
 
 	/* for testing */ String getName(Map<String, Object> attributes) {
@@ -278,35 +277,15 @@ class FeignClientsRegistrar implements ImportBeanDefinitionRegistrar,
 
 	protected ClassPathScanningCandidateComponentProvider getScanner() {
 		return new ClassPathScanningCandidateComponentProvider(false, this.environment) {
-
 			@Override
-			protected boolean isCandidateComponent(
-					AnnotatedBeanDefinition beanDefinition) {
+			protected boolean isCandidateComponent(AnnotatedBeanDefinition beanDefinition) {
+				boolean isCandidate = false;
 				if (beanDefinition.getMetadata().isIndependent()) {
-					// TODO until SPR-11711 will be resolved
-					if (beanDefinition.getMetadata().isInterface()
-							&& beanDefinition.getMetadata()
-									.getInterfaceNames().length == 1
-							&& Annotation.class.getName().equals(beanDefinition
-									.getMetadata().getInterfaceNames()[0])) {
-						try {
-							Class<?> target = ClassUtils.forName(
-									beanDefinition.getMetadata().getClassName(),
-									FeignClientsRegistrar.this.classLoader);
-							return !target.isAnnotation();
-						}
-						catch (Exception ex) {
-							this.logger.error(
-									"Could not load target class: "
-											+ beanDefinition.getMetadata().getClassName(),
-									ex);
-
-						}
+					if (!beanDefinition.getMetadata().isAnnotation()) {
+						isCandidate = true;
 					}
-					return true;
 				}
-				return false;
-
+				return isCandidate;
 			}
 		};
 	}
@@ -399,8 +378,7 @@ class FeignClientsRegistrar implements ImportBeanDefinitionRegistrar,
 		 * @param delegates must not be {@literal null}.
 		 */
 		public AllTypeFilter(List<TypeFilter> delegates) {
-
-			Assert.notNull(delegates);
+			Assert.notNull(delegates, "This argument is required, it must not be null");
 			this.delegates = delegates;
 		}
 

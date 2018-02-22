@@ -1,5 +1,5 @@
 /*
- * Copyright 2013-2016 the original author or authors.
+ * Copyright 2013-2017 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,14 +16,6 @@
 
 package org.springframework.cloud.netflix.feign.valid;
 
-import static org.hamcrest.Matchers.instanceOf;
-import static org.hamcrest.Matchers.is;
-import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertNotNull;
-import static org.junit.Assert.assertNull;
-import static org.junit.Assert.assertThat;
-import static org.junit.Assert.assertTrue;
-
 import java.lang.reflect.InvocationHandler;
 import java.lang.reflect.Method;
 import java.lang.reflect.Proxy;
@@ -33,6 +25,8 @@ import java.util.Arrays;
 import java.util.Collection;
 import java.util.List;
 import java.util.Locale;
+import java.util.Objects;
+import java.util.Optional;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 
@@ -75,6 +69,15 @@ import com.netflix.hystrix.HystrixCommandKey;
 import com.netflix.loadbalancer.Server;
 import com.netflix.loadbalancer.ServerList;
 
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.hamcrest.Matchers.instanceOf;
+import static org.hamcrest.Matchers.is;
+import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertNotNull;
+import static org.junit.Assert.assertNull;
+import static org.junit.Assert.assertThat;
+import static org.junit.Assert.assertTrue;
+
 import feign.Client;
 import feign.Feign;
 import feign.Logger;
@@ -83,9 +86,6 @@ import feign.RequestTemplate;
 import feign.Target;
 import feign.hystrix.FallbackFactory;
 import feign.hystrix.SetterFactory;
-import lombok.AllArgsConstructor;
-import lombok.Data;
-import lombok.NoArgsConstructor;
 import rx.Observable;
 import rx.Single;
 
@@ -99,7 +99,7 @@ import rx.Single;
 		"spring.application.name=feignclienttest",
 		"logging.level.org.springframework.cloud.netflix.feign.valid=DEBUG",
 		"feign.httpclient.enabled=false", "feign.okhttp.enabled=false",
-        "feign.hystrix.enabled=true"})
+		"feign.hystrix.enabled=true"})
 @DirtiesContext
 public class FeignClientTests {
 
@@ -162,6 +162,9 @@ public class FeignClientTests {
 	protected interface TestClient {
 		@RequestMapping(method = RequestMethod.GET, path = "/hello")
 		Hello getHello();
+
+		@RequestMapping(method = RequestMethod.GET, path = "/hello")
+		Optional<Hello> getOptionalHello();
 
 		@RequestMapping(method = RequestMethod.GET, path = "${feignClient.methodLevelRequestMappingPath}")
 		Hello getHelloUsingPropertyPlaceHolder();
@@ -242,6 +245,9 @@ public class FeignClientTests {
 	protected interface DecodingTestClient {
 		@RequestMapping(method = RequestMethod.GET, path = "/notFound")
 		ResponseEntity<String> notFound();
+
+		@RequestMapping(method = RequestMethod.GET, path = "/notFound")
+		Optional<String> optional();
 	}
 
 	@FeignClient(name = "localapp3", fallback = HystrixClientFallback.class)
@@ -521,6 +527,15 @@ public class FeignClientTests {
 	}
 
 	@Test
+	public void testOptional() {
+		Optional<Hello> hello = this.testClient.getOptionalHello();
+		assertThat(hello)
+				.isNotNull()
+				.isPresent()
+				.contains(new Hello(HELLO_WORLD_1));
+	}
+
+	@Test
 	public void testGenericType() {
 		List<Hello> hellos = this.testClient.getHellos();
 		assertNotNull("hellos was null", hellos);
@@ -635,6 +650,12 @@ public class FeignClientTests {
 	}
 
 	@Test
+	public void testOptionalNotFound() {
+		Optional<String> s = decodingTestClient.optional();
+		assertThat(s).isNotPresent();
+	}
+
+	@Test
 	public void testConvertingExpander() {
 		assertEquals(Arg.A.toString(), testClient.getToString(Arg.A));
 		assertEquals(Arg.B.toString(), testClient.getToString(Arg.B));
@@ -725,11 +746,36 @@ public class FeignClientTests {
 		assertEquals("hellos didn't match", hellos, getHelloList());
 	}
 
-	@Data
-	@AllArgsConstructor
-	@NoArgsConstructor
 	public static class Hello {
 		private String message;
+
+		public Hello() {
+		}
+
+		public Hello(String message) {
+			this.message = message;
+		}
+
+		public String getMessage() {
+			return message;
+		}
+
+		public void setMessage(String message) {
+			this.message = message;
+		}
+
+		@Override
+		public boolean equals(Object o) {
+			if (this == o) return true;
+			if (o == null || getClass() != o.getClass()) return false;
+			Hello that = (Hello) o;
+			return Objects.equals(message, that.message);
+		}
+
+		@Override
+		public int hashCode() {
+			return Objects.hash(message);
+		}
 	}
 
 	@Configuration

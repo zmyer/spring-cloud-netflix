@@ -1,5 +1,5 @@
 /*
- * Copyright 2013-2015 the original author or authors.
+ * Copyright 2013-2018 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,19 +16,25 @@
 
 package org.springframework.cloud.netflix.hystrix.dashboard;
 
+import java.util.Map;
+
 import org.apache.http.Header;
 import org.apache.http.message.BasicHeader;
 import org.junit.Test;
-
+import org.springframework.boot.test.context.runner.ApplicationContextRunner;
+import org.springframework.boot.web.servlet.ServletRegistrationBean;
 import org.springframework.mock.web.MockHttpServletResponse;
 import org.springframework.test.util.ReflectionTestUtils;
 
 import static org.hamcrest.Matchers.is;
+import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertThat;
 
 /**
  * @author Roy Clarkson
+ * @author Fahim Farook
+ * @author Biju Kunjummen
  */
 public class HystrixDashboardConfigurationTests {
 
@@ -39,7 +45,7 @@ public class HystrixDashboardConfigurationTests {
 		headers[0] = new BasicHeader("Content-Type", "text/proxy.stream");
 		HystrixDashboardConfiguration.ProxyStreamServlet proxyStreamServlet = new HystrixDashboardConfiguration.ProxyStreamServlet();
 		ReflectionTestUtils.invokeMethod(proxyStreamServlet,
-				"copyHeadersToServletResponse", headers, response);
+			"copyHeadersToServletResponse", headers, response);
 		assertThat(response.getHeaderNames().size(), is(1));
 		assertThat(response.getHeader("Content-Type"), is("text/proxy.stream"));
 	}
@@ -52,7 +58,7 @@ public class HystrixDashboardConfigurationTests {
 		headers[1] = new BasicHeader("Connection", "close");
 		HystrixDashboardConfiguration.ProxyStreamServlet proxyStreamServlet = new HystrixDashboardConfiguration.ProxyStreamServlet();
 		ReflectionTestUtils.invokeMethod(proxyStreamServlet,
-				"copyHeadersToServletResponse", headers, response);
+			"copyHeadersToServletResponse", headers, response);
 		assertThat(response.getHeaderNames().size(), is(2));
 		assertThat(response.getHeader("Content-Type"), is("text/proxy.stream"));
 		assertThat(response.getHeader("Connection"), is("close"));
@@ -67,7 +73,7 @@ public class HystrixDashboardConfigurationTests {
 		HystrixDashboardConfiguration.ProxyStreamServlet proxyStreamServlet = new HystrixDashboardConfiguration.ProxyStreamServlet();
 		proxyStreamServlet.setEnableIgnoreConnectionCloseHeader(true);
 		ReflectionTestUtils.invokeMethod(proxyStreamServlet,
-				"copyHeadersToServletResponse", headers, response);
+			"copyHeadersToServletResponse", headers, response);
 		assertThat(response.getHeaderNames().size(), is(1));
 		assertThat(response.getHeader("Content-Type"), is("text/proxy.stream"));
 		assertNull(response.getHeader("Connection"));
@@ -82,10 +88,28 @@ public class HystrixDashboardConfigurationTests {
 		HystrixDashboardConfiguration.ProxyStreamServlet proxyStreamServlet = new HystrixDashboardConfiguration.ProxyStreamServlet();
 		proxyStreamServlet.setEnableIgnoreConnectionCloseHeader(false);
 		ReflectionTestUtils.invokeMethod(proxyStreamServlet,
-				"copyHeadersToServletResponse", headers, response);
+			"copyHeadersToServletResponse", headers, response);
 		assertThat(response.getHeaderNames().size(), is(2));
 		assertThat(response.getHeader("Content-Type"), is("text/proxy.stream"));
 		assertThat(response.getHeader("Connection"), is("close"));
 	}
 
+	@Test
+	public void initParameters() {
+		new ApplicationContextRunner()
+			.withUserConfiguration(HystrixDashboardConfiguration.class)
+			.withPropertyValues(
+				"hystrix.dashboard.init-parameters.wl-dispatch-polixy=work-manager-hystrix")
+			.run(context -> {
+				final ServletRegistrationBean registration = context
+					.getBean(ServletRegistrationBean.class);
+				assertNotNull(registration);
+
+				final Map<String, String> initParameters = registration
+					.getInitParameters();
+				assertNotNull(initParameters);
+				assertThat(initParameters.get("wl-dispatch-polixy"),
+					is("work-manager-hystrix"));
+			});
+	}
 }

@@ -19,28 +19,34 @@ package org.springframework.cloud.netflix.hystrix.stream;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.boot.SpringBootConfiguration;
 import org.springframework.boot.autoconfigure.EnableAutoConfiguration;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.context.SpringBootTest.WebEnvironment;
-import org.springframework.cloud.client.ServiceInstance;
 import org.springframework.cloud.client.circuitbreaker.EnableCircuitBreaker;
-import org.springframework.cloud.client.discovery.DiscoveryClient;
-import org.springframework.context.annotation.Configuration;
+import org.springframework.cloud.client.serviceregistry.Registration;
+import org.springframework.cloud.stream.test.binder.MessageCollector;
+import org.springframework.messaging.Message;
+import org.springframework.messaging.MessageChannel;
 import org.springframework.test.annotation.DirtiesContext;
-import org.springframework.test.context.junit4.SpringJUnit4ClassRunner;
+import org.springframework.test.context.junit4.SpringRunner;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.netflix.hystrix.contrib.javanica.annotation.HystrixCommand;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
  * @author Spencer Gibb
+ * @author Daniel Lavoie
  */
-@RunWith(SpringJUnit4ClassRunner.class)
-@SpringBootTest(classes = HystrixStreamTests.Application.class, webEnvironment = WebEnvironment.RANDOM_PORT, value = {
-		"server.port=0", "spring.jmx.enabled=true", "spring.application.name=mytestapp" })
+@RunWith(SpringRunner.class)
+@SpringBootTest(webEnvironment = WebEnvironment.RANDOM_PORT, properties = {
+		"debug=true", "spring.jmx.enabled=true", "spring.application.name=mytestapp" })
 @DirtiesContext
 public class HystrixStreamTests {
 
@@ -49,14 +55,24 @@ public class HystrixStreamTests {
 
 	@Autowired
 	private Application application;
-	
+
+	@Autowired(required = false)
+	private Registration registration;
+
 	@Autowired
-	private DiscoveryClient discoveryClient;
+	private ObjectMapper mapper;
+
+	@Autowired
+	private MessageCollector collector;
+
+	@Autowired
+	@Qualifier(HystrixStreamClient.OUTPUT)
+	private MessageChannel output;
 
 	@EnableAutoConfiguration
 	@EnableCircuitBreaker
 	@RestController
-	@Configuration
+	@SpringBootConfiguration
 	public static class Application {
 
 		@HystrixCommand
@@ -67,14 +83,19 @@ public class HystrixStreamTests {
 	}
 
 	@Test
-	public void contextLoads() {
+	public void contextLoads() throws Exception {
 		this.application.hello();
-		//It is important that local service instance resolves for metrics 
-		//origin details to be populated
-		ServiceInstance localServiceInstance = discoveryClient.getLocalServiceInstance();
-		assertThat(localServiceInstance).isNotNull();
-		assertThat(localServiceInstance.getServiceId()).isEqualTo("mytestapp");
+		// It is important that local service instance resolves for metrics
+		// origin details to be populated
+		assertThat(this.registration).isNotNull();
+		assertThat(this.registration.getServiceId()).isEqualTo("mytestapp");
 		this.task.gatherMetrics();
+		Message<?> message = this.collector.forChannel(output).take();
+		JsonNode tree = mapper.readTree((String)message.getPayload());
+		assertThat(tree.hasNonNull("origin")).isTrue();
+		assertThat(tree.hasNonNull("data")).isTrue();
+		assertThat(tree.hasNonNull("event")).isTrue();
+		assertThat(tree.findValue("event").asText()).isEqualTo("message");
 	}
 
 }
