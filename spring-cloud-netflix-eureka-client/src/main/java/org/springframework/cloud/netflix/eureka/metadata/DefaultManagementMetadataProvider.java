@@ -40,7 +40,7 @@ public class DefaultManagementMetadataProvider implements ManagementMetadataProv
 		return port != null && port == RANDOM_PORT;
 	}
 
-	private String getHealthCheckUrl(EurekaInstanceConfigBean instance, int serverPort, String serverContextPath,
+	protected String getHealthCheckUrl(EurekaInstanceConfigBean instance, int serverPort, String serverContextPath,
                                      String managementContextPath, Integer managementPort, boolean isSecure) {
         String healthCheckUrlPath = instance.getHealthCheckUrlPath();
         String healthCheckUrl = getUrl(instance, serverPort, serverContextPath, managementContextPath,
@@ -71,6 +71,10 @@ public class DefaultManagementMetadataProvider implements ManagementMetadataProv
 
     private String refineManagementContextPath(String serverContextPath, String managementContextPath,
                                                Integer managementPort) {
+        // management context path is relative to server context path when no management port is set
+        if (managementContextPath != null && managementPort == null) {
+            return serverContextPath + managementContextPath;
+        }
         if(managementContextPath != null) {
             return managementContextPath;
         }
@@ -86,7 +90,8 @@ public class DefaultManagementMetadataProvider implements ManagementMetadataProv
             if (!contextPath.endsWith("/")) {
                 contextPath = contextPath + "/";
             }
-            URL base = new URL(scheme, hostname, port, contextPath);
+            String refinedContextPath = '/' + StringUtils.trimLeadingCharacter(contextPath, '/') ;
+            URL base = new URL(scheme, hostname, port, refinedContextPath);
             String refinedStatusPath = StringUtils.trimLeadingCharacter(statusPath, '/');
             return new URL(base, refinedStatusPath).toString();
         } catch (MalformedURLException e) {

@@ -48,6 +48,11 @@ public class EurekaInstanceConfigBean implements CloudEurekaInstanceConfig, Envi
 	private InetUtils inetUtils;
 
 	/**
+	 * Default prefix for actuator endpoints
+	 */
+	private String actuatorPrefix = "/actuator";
+
+	/**
 	 * Get the name of the application to be registered with eureka.
 	 */
 	private String appname = UNKNOWN;
@@ -169,7 +174,7 @@ public class EurekaInstanceConfigBean implements CloudEurekaInstanceConfig, Envi
 	 * status of this instance. Users can provide a simple HTML indicating what is the
 	 * current status of the instance.
 	 */
-	private String statusPageUrlPath = "/info";
+	private String statusPageUrlPath = actuatorPrefix + "/info";
 
 	/**
 	 * Gets the absolute status page URL path for this instance. The users can provide the
@@ -213,7 +218,7 @@ public class EurekaInstanceConfigBean implements CloudEurekaInstanceConfig, Envi
 	 * instance - for example, it can be used to determine whether to proceed deployments
 	 * to an entire farm or stop the deployments without causing further damage.
 	 */
-	private String healthCheckUrlPath = "/health";
+	private String healthCheckUrlPath = actuatorPrefix + "/health";
 
 	/**
 	 * Gets the absolute health check page URL for this instance. The users can provide
@@ -265,7 +270,7 @@ public class EurekaInstanceConfigBean implements CloudEurekaInstanceConfig, Envi
 	private boolean preferIpAddress = false;
 
 	/**
-	 * Initial status to register with rmeote Eureka server.
+	 * Initial status to register with remote Eureka server.
 	 */
 	private InstanceStatus initialStatus = InstanceStatus.UP;
 
@@ -324,7 +329,7 @@ public class EurekaInstanceConfigBean implements CloudEurekaInstanceConfig, Envi
 		this.environment = environment;
 		// set some defaults from the environment, but allow the defaults to use relaxed binding
 		String springAppName = this.environment.getProperty("spring.application.name", "");
-		if(StringUtils.hasText(springAppName)) {
+		if (StringUtils.hasText(springAppName)) {
 			setAppname(springAppName);
 			setVirtualHostName(springAppName);
 			setSecureVirtualHostName(springAppName);
@@ -646,5 +651,4 @@ public class EurekaInstanceConfigBean implements CloudEurekaInstanceConfig, Envi
 				.append("environment=").append(environment).append(", ").append("}")
 				.toString();
 	}
-
 }

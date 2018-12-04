@@ -23,6 +23,8 @@ import java.io.InputStream;
 import java.net.URI;
 import java.util.ArrayList;
 import java.util.Locale;
+import java.util.concurrent.TimeUnit;
+
 import org.apache.http.HttpEntity;
 import org.apache.http.StatusLine;
 import org.apache.http.client.HttpClient;
@@ -39,13 +41,11 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.ArgumentMatcher;
 import org.mockito.invocation.InvocationOnMock;
 import org.mockito.stubbing.Answer;
-import org.springframework.cloud.client.loadbalancer.LoadBalancedBackOffPolicyFactory;
-import org.springframework.cloud.client.loadbalancer.LoadBalancedRetryListenerFactory;
-import org.springframework.cloud.client.loadbalancer.LoadBalancedRetryPolicyFactory;
+import org.springframework.cloud.client.loadbalancer.LoadBalancedRetryFactory;
 import org.springframework.cloud.commons.httpclient.HttpClientConfiguration;
 import org.springframework.cloud.netflix.ribbon.RibbonAutoConfiguration;
 import org.springframework.cloud.netflix.ribbon.RibbonLoadBalancedRetryPolicy;
-import org.springframework.cloud.netflix.ribbon.RibbonLoadBalancedRetryPolicyFactory;
+import org.springframework.cloud.netflix.ribbon.RibbonLoadBalancedRetryFactory;
 import org.springframework.cloud.netflix.ribbon.RibbonLoadBalancerContext;
 import org.springframework.cloud.netflix.ribbon.ServerIntrospector;
 import org.springframework.cloud.netflix.ribbon.SpringClientFactory;
@@ -64,6 +64,8 @@ import org.springframework.retry.backoff.BackOffInterruptedException;
 import org.springframework.retry.backoff.BackOffPolicy;
 import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.util.LinkedMultiValueMap;
+
+import com.netflix.client.ClientException;
 import com.netflix.client.DefaultLoadBalancerRetryHandler;
 import com.netflix.client.RetryHandler;
 import com.netflix.client.config.CommonClientConfigKey;
@@ -71,11 +73,17 @@ import com.netflix.client.config.DefaultClientConfigImpl;
 import com.netflix.client.config.IClientConfig;
 import com.netflix.loadbalancer.AbstractLoadBalancer;
 import com.netflix.loadbalancer.ILoadBalancer;
+import com.netflix.loadbalancer.LoadBalancerStats;
 import com.netflix.loadbalancer.Server;
+import com.netflix.loadbalancer.ServerStats;
+import com.netflix.servo.monitor.Monitors;
 
 import static org.hamcrest.Matchers.is;
+import static org.hamcrest.CoreMatchers.containsString;
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertThat;
+import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
 import static org.mockito.BDDMockito.given;
 import static org.mockito.Matchers.any;
@@ -97,8 +105,6 @@ import static org.mockito.Mockito.when;
 public class RibbonLoadBalancingHttpClientTests {
 
 	private ILoadBalancer loadBalancer;
-	private LoadBalancedBackOffPolicyFactory loadBalancedBackOffPolicyFactory = new LoadBalancedBackOffPolicyFactory.NoBackOffPolicyFactory();
-	private LoadBalancedRetryListenerFactory loadBalancedRetryListenerFactory = new LoadBalancedRetryListenerFactory.DefaultRetryListenerFactory();
 
 	@Before
 	public void setup() {
@@ -117,6 +123,7 @@ public class RibbonLoadBalancingHttpClientTests {
 		RequestConfig result = getBuiltRequestConfig(UseDefaults.class, null);
 
 		assertThat(result.isRedirectsEnabled(), is(false));
+		
 	}
 
 	@Test
@@ -145,6 +152,20 @@ public class RibbonLoadBalancingHttpClientTests {
 		RequestConfig result = getBuiltRequestConfig(UseDefaults.class, null);
 		assertThat(result.getConnectTimeout(), is(1000));
 		assertThat(result.getSocketTimeout(), is (1000));
+	}
+	
+	@Test
+	public void testCompressionDefault() throws Exception {
+		RequestConfig result = getBuiltRequestConfig(UseDefaults.class, null);
+		assertTrue(result.isContentCompressionEnabled());
+	}
+	
+	@Test
+	public void testCompressionDisabled() throws Exception {
+		IClientConfig configOverride = DefaultClientConfigImpl.getClientConfigWithDefaultValues();
+		configOverride.set(CommonClientConfigKey.GZipPayload, false);
+		RequestConfig result = getBuiltRequestConfig(UseDefaults.class, configOverride);
+		assertFalse(result.isContentCompressionEnabled());
 	}
 
 	@Test
@@ -250,9 +271,11 @@ public class RibbonLoadBalancingHttpClientTests {
 		doReturn(locale).when(fourOFourResponse).getLocale();
 		doReturn(fourOFourResponse).when(delegate).execute(any(HttpUriRequest.class));
 		ILoadBalancer lb = mock(ILoadBalancer.class);
-		MyBackOffPolicyFactory myBackOffPolicyFactory = new MyBackOffPolicyFactory();
+		RibbonLoadBalancerContext ribbonLoadBalancerContext = new RibbonLoadBalancerContext(lb);
+		MyBackOffPolicy myBackOffPolicy = new MyBackOffPolicy();
 		RetryableRibbonLoadBalancingHttpClient client = setupClientForRetry(retriesNextServer, retriesSameServer, retryable, retryOnAllOps,
-				serviceName, host, port, delegate, lb, "404", myBackOffPolicyFactory);
+				serviceName, host, port, delegate, lb, "404", myBackOffPolicy);
+		client.setRibbonLoadBalancerContext(ribbonLoadBalancerContext);
 		RibbonApacheHttpRequest request = mock(RibbonApacheHttpRequest.class);
 		doReturn(uri).when(request).getURI();
 		doReturn(method).when(request).getMethod();
@@ -272,16 +295,16 @@ public class RibbonLoadBalancingHttpClientTests {
 																	   boolean retryable, boolean retryOnAllOps,
 																	   String serviceName, String host, int port,
 																	   CloseableHttpClient delegate, ILoadBalancer lb, String statusCodes,
-																	   LoadBalancedBackOffPolicyFactory loadBalancedBackOffPolicyFactory) throws Exception {
+																	   BackOffPolicy backOffPolicy) throws Exception {
 		return setupClientForRetry(retriesNextServer, retriesSameServer, retryable, retryOnAllOps, serviceName, host, port,
-				delegate, lb, statusCodes, loadBalancedBackOffPolicyFactory, false);
+				delegate, lb, statusCodes, backOffPolicy, false);
 	}
 
 	private RetryableRibbonLoadBalancingHttpClient setupClientForRetry(int retriesNextServer, int retriesSameServer,
 																	   boolean retryable, boolean retryOnAllOps,
 																	   String serviceName, String host, int port,
 																	   CloseableHttpClient delegate, ILoadBalancer lb, String statusCodes,
-																	   LoadBalancedBackOffPolicyFactory loadBalancedBackOffPolicyFactory,
+																	   BackOffPolicy backOffPolicy,
 																	   boolean isSecure) throws Exception {
 		ServerIntrospector introspector = mock(ServerIntrospector.class);
 		RetryHandler retryHandler = new DefaultLoadBalancerRetryHandler(retriesSameServer, retriesNextServer, retryable);
@@ -297,9 +320,14 @@ public class RibbonLoadBalancingHttpClientTests {
 		SpringClientFactory clientFactory = mock(SpringClientFactory.class);
 		doReturn(context).when(clientFactory).getLoadBalancerContext(eq(serviceName));
 		doReturn(clientConfig).when(clientFactory).getClientConfig(eq(serviceName));
-		LoadBalancedRetryPolicyFactory factory = new RibbonLoadBalancedRetryPolicyFactory(clientFactory);
+		LoadBalancedRetryFactory factory = new RibbonLoadBalancedRetryFactory(clientFactory) {
+			@Override
+			public BackOffPolicy createBackOffPolicy(String service) {
+				return backOffPolicy;
+			}
+		};
 		RetryableRibbonLoadBalancingHttpClient client = new RetryableRibbonLoadBalancingHttpClient(delegate, clientConfig,
-				introspector, factory, loadBalancedBackOffPolicyFactory, new LoadBalancedRetryListenerFactory.DefaultRetryListenerFactory());
+				introspector, factory);
 		client.setLoadBalancer(lb);
 		ReflectionTestUtils.setField(client, "delegate", delegate);
 		return client;
@@ -309,8 +337,8 @@ public class RibbonLoadBalancingHttpClientTests {
 																	   boolean retryable, boolean retryOnAllOps,
 																	   String serviceName, String host, int port,
 																	   CloseableHttpClient delegate, ILoadBalancer lb, String statusCodes,
-																	   LoadBalancedBackOffPolicyFactory loadBalancedBackOffPolicyFactory,
-																	   boolean isSecure, LoadBalancedRetryListenerFactory loadBalancedRetryListenerFactory) throws Exception {
+																	   BackOffPolicy backOffPolicy,
+																	   boolean isSecure, RetryListener[] retryListeners) throws Exception {
 		ServerIntrospector introspector = mock(ServerIntrospector.class);
 		RetryHandler retryHandler = new DefaultLoadBalancerRetryHandler(retriesSameServer, retriesNextServer, retryable);
 		doReturn(new Server(host, port)).when(lb).chooseServer(eq(serviceName));
@@ -325,9 +353,19 @@ public class RibbonLoadBalancingHttpClientTests {
 		SpringClientFactory clientFactory = mock(SpringClientFactory.class);
 		doReturn(context).when(clientFactory).getLoadBalancerContext(eq(serviceName));
 		doReturn(clientConfig).when(clientFactory).getClientConfig(eq(serviceName));
-		LoadBalancedRetryPolicyFactory factory = new RibbonLoadBalancedRetryPolicyFactory(clientFactory);
+		LoadBalancedRetryFactory factory = new RibbonLoadBalancedRetryFactory(clientFactory) {
+			@Override
+			public RetryListener[] createRetryListeners(String service) {
+				return retryListeners;
+			}
+
+			@Override
+			public BackOffPolicy createBackOffPolicy(String service) {
+				return backOffPolicy;
+			}
+		};
 		RetryableRibbonLoadBalancingHttpClient client = new RetryableRibbonLoadBalancingHttpClient(delegate, clientConfig,
-			introspector, factory, loadBalancedBackOffPolicyFactory, loadBalancedRetryListenerFactory);
+			introspector, factory);
 		client.setLoadBalancer(lb);
 		ReflectionTestUtils.setField(client, "delegate", delegate);
 		return client;
@@ -350,9 +388,17 @@ public class RibbonLoadBalancingHttpClientTests {
 		doReturn(200).when(statusLine).getStatusCode();
 		doReturn(statusLine).when(response).getStatusLine();
 		doThrow(new IOException("boom")).doReturn(response).when(delegate).execute(any(HttpUriRequest.class));
-		ILoadBalancer lb = mock(ILoadBalancer.class);
+		AbstractLoadBalancer lb = mock(AbstractLoadBalancer.class);
+		LoadBalancerStats lbStats = mock(LoadBalancerStats.class);
+		doReturn(lbStats).when(lb).getLoadBalancerStats();
+		ServerStats serverStats = mock(ServerStats.class);
+		doReturn(serverStats).when(lbStats).getSingleServerStat(any(Server.class));
+		RibbonLoadBalancerContext ribbonLoadBalancerContext = mock(RibbonLoadBalancerContext.class);
+		doReturn(lb).when(ribbonLoadBalancerContext).getLoadBalancer();
+		doReturn(Monitors.newTimer("_LoadBalancerExecutionTimer", TimeUnit.MILLISECONDS)).when(ribbonLoadBalancerContext).getExecuteTracer();
 		RetryableRibbonLoadBalancingHttpClient client = setupClientForRetry(retriesNextServer, retriesSameServer, retryable, retryOnAllOps,
-				serviceName, host, port, delegate, lb, "", loadBalancedBackOffPolicyFactory);
+				serviceName, host, port, delegate, lb, "", null);
+		client.setRibbonLoadBalancerContext(ribbonLoadBalancerContext);
 		RibbonApacheHttpRequest request = mock(RibbonApacheHttpRequest.class);
 		doReturn(uri).when(request).getURI();
 		doReturn(method).when(request).getMethod();
@@ -363,6 +409,7 @@ public class RibbonLoadBalancingHttpClientTests {
 		RibbonApacheHttpResponse returnedResponse = client.execute(request, null);
 		verify(delegate, times(2)).execute(any(HttpUriRequest.class));
 		verify(lb, times(1)).chooseServer(eq(serviceName));
+		verify(ribbonLoadBalancerContext, times(1)).noteRequestCompletion(serverStats, response, null, 0, null);
 	}
 
 	@Test
@@ -384,9 +431,11 @@ public class RibbonLoadBalancingHttpClientTests {
 		doThrow(new IOException("boom")).doThrow(new IOException("boom again")).doReturn(response).
 				when(delegate).execute(any(HttpUriRequest.class));
 		ILoadBalancer lb = mock(ILoadBalancer.class);
-		MyBackOffPolicyFactory myBackOffPolicyFactory = new MyBackOffPolicyFactory();
+		RibbonLoadBalancerContext ribbonLoadBalancerContext = new RibbonLoadBalancerContext(lb);
+		MyBackOffPolicy myBackOffPolicy = new MyBackOffPolicy();
 		RetryableRibbonLoadBalancingHttpClient client = setupClientForRetry(retriesNextServer, retriesSameServer, retryable, retryOnAllOps,
-				serviceName, host, port, delegate, lb, "", myBackOffPolicyFactory);
+				serviceName, host, port, delegate, lb, "", myBackOffPolicy);
+		client.setRibbonLoadBalancerContext(ribbonLoadBalancerContext);
 		RibbonApacheHttpRequest request = mock(RibbonApacheHttpRequest.class);
 		doReturn(uri).when(request).getURI();
 		doReturn(method).when(request).getMethod();
@@ -397,7 +446,7 @@ public class RibbonLoadBalancingHttpClientTests {
 		client.execute(request, null);
 		verify(delegate, times(3)).execute(any(HttpUriRequest.class));
 		verify(lb, times(2)).chooseServer(eq(serviceName));
-		assertEquals(2, myBackOffPolicyFactory.getCount());
+		assertEquals(2, myBackOffPolicy.getCount());
 	}
 
 	@Test
@@ -419,9 +468,11 @@ public class RibbonLoadBalancingHttpClientTests {
 		doThrow(new IOException("boom")).doThrow(new IOException("boom again")).doReturn(response).
 				when(delegate).execute(any(HttpUriRequest.class));
 		ILoadBalancer lb = mock(ILoadBalancer.class);
-		MyBackOffPolicyFactory myBackOffPolicyFactory = new MyBackOffPolicyFactory();
+		RibbonLoadBalancerContext ribbonLoadBalancerContext = new RibbonLoadBalancerContext(lb);
+		MyBackOffPolicy myBackOffPolicy = new MyBackOffPolicy();
 		RetryableRibbonLoadBalancingHttpClient client = setupClientForRetry(retriesNextServer, retriesSameServer, retryable, retryOnAllOps,
-				serviceName, host, port, delegate, lb, "", myBackOffPolicyFactory);
+				serviceName, host, port, delegate, lb, "", myBackOffPolicy);
+		client.setRibbonLoadBalancerContext(ribbonLoadBalancerContext);
 		RibbonApacheHttpRequest request = mock(RibbonApacheHttpRequest.class);
 		doReturn(method).when(request).getMethod();
 		doReturn(uri).when(request).getURI();
@@ -432,7 +483,7 @@ public class RibbonLoadBalancingHttpClientTests {
 		verify(response, times(0)).close();
 		verify(delegate, times(3)).execute(any(HttpUriRequest.class));
 		verify(lb, times(2)).chooseServer(eq(serviceName));
-		assertEquals(2, myBackOffPolicyFactory.getCount());
+		assertEquals(2, myBackOffPolicy.getCount());
 	}
 
 	@Test
@@ -496,8 +547,10 @@ public class RibbonLoadBalancingHttpClientTests {
 		doReturn(response).
 				when(delegate).execute(any(HttpUriRequest.class));
 		ILoadBalancer lb = mock(ILoadBalancer.class);
+		RibbonLoadBalancerContext ribbonLoadBalancerContext = new RibbonLoadBalancerContext(lb);
 		RetryableRibbonLoadBalancingHttpClient client = setupClientForRetry(retriesNextServer, retriesSameServer, retryable, retryOnAllOps,
-				serviceName, host, port, delegate, lb, "", loadBalancedBackOffPolicyFactory,true);
+				serviceName, host, port, delegate, lb, "", null,true);
+		client.setRibbonLoadBalancerContext(ribbonLoadBalancerContext);
 		client.execute(request, null);
 		verify(response, times(0)).close();
 		verify(delegate, times(1)).execute(argThat(new ArgumentMatcher<HttpUriRequest>() {
@@ -528,8 +581,10 @@ public class RibbonLoadBalancingHttpClientTests {
 		doThrow(new IOException("boom")).doThrow(new IOException("boom again")).doReturn(response).
 				when(delegate).execute(any(HttpUriRequest.class));
 		ILoadBalancer lb = mock(ILoadBalancer.class);
+		RibbonLoadBalancerContext ribbonLoadBalancerContext = new RibbonLoadBalancerContext(lb);
 		RetryableRibbonLoadBalancingHttpClient client = setupClientForRetry(retriesNextServer, retriesSameServer, retryable, retryOnAllOps,
-				serviceName, host, port, delegate, lb, "", loadBalancedBackOffPolicyFactory);
+				serviceName, host, port, delegate, lb, "", null);
+		client.setRibbonLoadBalancerContext(ribbonLoadBalancerContext);
 		RibbonApacheHttpRequest request = mock(RibbonApacheHttpRequest.class);
 		doReturn(method).when(request).getMethod();
 		doReturn(uri).when(request).getURI();
@@ -576,9 +631,11 @@ public class RibbonLoadBalancingHttpClientTests {
 		doReturn(fourOFourStatusLine).when(fourOFourResponse).getStatusLine();
 		doReturn(fourOFourResponse).doReturn(response).when(delegate).execute(any(HttpUriRequest.class));
 		ILoadBalancer lb = mock(ILoadBalancer.class);
-		MyBackOffPolicyFactory myBackOffPolicyFactory = new MyBackOffPolicyFactory();
+		RibbonLoadBalancerContext ribbonLoadBalancerContext = new RibbonLoadBalancerContext(lb);
+		MyBackOffPolicy myBackOffPolicy = new MyBackOffPolicy();
 		RetryableRibbonLoadBalancingHttpClient client = setupClientForRetry(retriesNextServer, retriesSameServer, retryable, retryOnAllOps,
-				serviceName, host, port, delegate, lb, "404", myBackOffPolicyFactory);
+				serviceName, host, port, delegate, lb, "404", myBackOffPolicy);
+		client.setRibbonLoadBalancerContext(ribbonLoadBalancerContext);
 		RibbonApacheHttpRequest request = mock(RibbonApacheHttpRequest.class);
 		doReturn(uri).when(request).getURI();
 		doReturn(method).when(request).getMethod();
@@ -590,7 +647,7 @@ public class RibbonLoadBalancingHttpClientTests {
 		verify(fourOFourResponse, times(1)).close();
 		verify(delegate, times(2)).execute(any(HttpUriRequest.class));
 		verify(lb, times(1)).chooseServer(eq(serviceName));
-		assertEquals(1, myBackOffPolicyFactory.getCount());
+		assertEquals(1, myBackOffPolicy.getCount());
 	}
 
 	@Test
@@ -612,10 +669,12 @@ public class RibbonLoadBalancingHttpClientTests {
 		doThrow(new IOException("boom")).doThrow(new IOException("boom again")).doReturn(response).
 			when(delegate).execute(any(HttpUriRequest.class));
 		ILoadBalancer lb = mock(ILoadBalancer.class);
-		MyBackOffPolicyFactory myBackOffPolicyFactory = new MyBackOffPolicyFactory();
-		MyRetryListeners myRetryListeners = new MyRetryListeners();
+		RibbonLoadBalancerContext ribbonLoadBalancerContext = new RibbonLoadBalancerContext(lb);
+		MyBackOffPolicy myBackOffPolicy = new MyBackOffPolicy();
+		MyRetryListener myRetryListener = new MyRetryListener();
 		RetryableRibbonLoadBalancingHttpClient client = setupClientForRetry(retriesNextServer, retriesSameServer, retryable, retryOnAllOps,
-			serviceName, host, port, delegate, lb, "", myBackOffPolicyFactory, false, myRetryListeners);
+			serviceName, host, port, delegate, lb, "", myBackOffPolicy, false, new RetryListener[]{myRetryListener});
+		client.setRibbonLoadBalancerContext(ribbonLoadBalancerContext);
 		RibbonApacheHttpRequest request = mock(RibbonApacheHttpRequest.class);
 		doReturn(method).when(request).getMethod();
 		doReturn(uri).when(request).getURI();
@@ -626,8 +685,8 @@ public class RibbonLoadBalancingHttpClientTests {
 		verify(response, times(0)).close();
 		verify(delegate, times(3)).execute(any(HttpUriRequest.class));
 		verify(lb, times(2)).chooseServer(eq(serviceName));
-		assertEquals(2, myBackOffPolicyFactory.getCount());
-		assertEquals(2, myRetryListeners.getOnError());
+		assertEquals(2, myBackOffPolicy.getCount());
+		assertEquals(2, myRetryListener.getOnError());
 	}
 
 	@Test
@@ -649,10 +708,12 @@ public class RibbonLoadBalancingHttpClientTests {
 		doThrow(new IOException("boom")).doThrow(new IOException("boom again")).doReturn(response).
 			when(delegate).execute(any(HttpUriRequest.class));
 		ILoadBalancer lb = mock(ILoadBalancer.class);
-		MyBackOffPolicyFactory myBackOffPolicyFactory = new MyBackOffPolicyFactory();
-		MyRetryListeners myRetryListeners = new MyRetryListeners();
+		RibbonLoadBalancerContext ribbonLoadBalancerContext = new RibbonLoadBalancerContext(lb);
+		MyBackOffPolicy myBackOffPolicy = new MyBackOffPolicy();
+		MyRetryListener myRetryListener = new MyRetryListener();
 		RetryableRibbonLoadBalancingHttpClient client = setupClientForRetry(retriesNextServer, retriesSameServer, retryable, retryOnAllOps,
-			serviceName, host, port, delegate, lb, "", myBackOffPolicyFactory, false, loadBalancedRetryListenerFactory);
+			serviceName, host, port, delegate, lb, "", myBackOffPolicy, false, new RetryListener[]{});
+		client.setRibbonLoadBalancerContext(ribbonLoadBalancerContext);
 		RibbonApacheHttpRequest request = mock(RibbonApacheHttpRequest.class);
 		doReturn(method).when(request).getMethod();
 		doReturn(uri).when(request).getURI();
@@ -663,8 +724,8 @@ public class RibbonLoadBalancingHttpClientTests {
 		verify(response, times(0)).close();
 		verify(delegate, times(3)).execute(any(HttpUriRequest.class));
 		verify(lb, times(2)).chooseServer(eq(serviceName));
-		assertEquals(2, myBackOffPolicyFactory.getCount());
-		assertEquals(0, myRetryListeners.getOnError());
+		assertEquals(2, myBackOffPolicy.getCount());
+		assertEquals(0, myRetryListener.getOnError());
 	}
 
 	@Test(expected = TerminatedRetryException.class)
@@ -686,10 +747,10 @@ public class RibbonLoadBalancingHttpClientTests {
 		doThrow(new IOException("boom")).doThrow(new IOException("boom again")).doReturn(response).
 			when(delegate).execute(any(HttpUriRequest.class));
 		ILoadBalancer lb = mock(ILoadBalancer.class);
-		MyBackOffPolicyFactory myBackOffPolicyFactory = new MyBackOffPolicyFactory();
-		MyRetryListenersNotRetry myRetryListenersNotRetry = new MyRetryListenersNotRetry();
+		MyBackOffPolicy myBackOffPolicy = new MyBackOffPolicy();
+		MyRetryListenerNotRetry myRetryListenerNotRetry = new MyRetryListenerNotRetry();
 		RetryableRibbonLoadBalancingHttpClient client = setupClientForRetry(retriesNextServer, retriesSameServer, retryable, retryOnAllOps,
-			serviceName, host, port, delegate, lb, "", myBackOffPolicyFactory, false, myRetryListenersNotRetry);
+			serviceName, host, port, delegate, lb, "", myBackOffPolicy, false, new RetryListener[]{myRetryListenerNotRetry});
 		RibbonApacheHttpRequest request = mock(RibbonApacheHttpRequest.class);
 		doReturn(method).when(request).getMethod();
 		doReturn(uri).when(request).getURI();
@@ -719,9 +780,11 @@ public class RibbonLoadBalancingHttpClientTests {
 		doThrow(new IOException("boom")).doThrow(new IOException("boom again")).doReturn(response).
 			when(delegate).execute(any(HttpUriRequest.class));
 		ILoadBalancer lb = mock(ILoadBalancer.class);
-		MyBackOffPolicyFactory myBackOffPolicyFactory = new MyBackOffPolicyFactory();
+		RibbonLoadBalancerContext ribbonLoadBalancerContext = new RibbonLoadBalancerContext(lb);
+		MyBackOffPolicy myBackOffPolicy = new MyBackOffPolicy();
 		RetryableRibbonLoadBalancingHttpClient client = setupClientForRetry(retriesNextServer, retriesSameServer, retryable, retryOnAllOps,
-			serviceName, host, port, delegate, lb, "", myBackOffPolicyFactory, false);
+			serviceName, host, port, delegate, lb, "", myBackOffPolicy, false);
+		client.setRibbonLoadBalancerContext(ribbonLoadBalancerContext);
 		RibbonApacheHttpRequest request = mock(RibbonApacheHttpRequest.class);
 		doReturn(method).when(request).getMethod();
 		doReturn(uri).when(request).getURI();
@@ -732,7 +795,83 @@ public class RibbonLoadBalancingHttpClientTests {
 		verify(response, times(0)).close();
 		verify(delegate, times(3)).execute(any(HttpUriRequest.class));
 		verify(lb, times(2)).chooseServer(eq(serviceName));
-		assertEquals(2, myBackOffPolicyFactory.getCount());
+		assertEquals(2, myBackOffPolicy.getCount());
+	}
+	
+	private RetryableRibbonLoadBalancingHttpClient setupClientForServerValidation(String serviceName, String host, int port,
+			CloseableHttpClient delegate, ILoadBalancer lb) throws Exception {
+		ServerIntrospector introspector = mock(ServerIntrospector.class);
+		RetryHandler retryHandler = new DefaultLoadBalancerRetryHandler(1, 1, true);
+		DefaultClientConfigImpl clientConfig = new DefaultClientConfigImpl();
+		clientConfig.set(CommonClientConfigKey.OkToRetryOnAllOperations, true);
+		clientConfig.set(CommonClientConfigKey.MaxAutoRetriesNextServer, 0);
+		clientConfig.set(CommonClientConfigKey.MaxAutoRetries, 1);
+		clientConfig.set(RibbonLoadBalancedRetryPolicy.RETRYABLE_STATUS_CODES, "");
+		clientConfig.set(CommonClientConfigKey.IsSecure, false);
+		clientConfig.setClientName(serviceName);
+		RibbonLoadBalancerContext context = new RibbonLoadBalancerContext(lb, clientConfig, retryHandler);
+		SpringClientFactory clientFactory = mock(SpringClientFactory.class);
+		doReturn(context).when(clientFactory).getLoadBalancerContext(eq(serviceName));
+		doReturn(clientConfig).when(clientFactory).getClientConfig(eq(serviceName));
+		LoadBalancedRetryFactory factory = new RibbonLoadBalancedRetryFactory(clientFactory);
+		RetryableRibbonLoadBalancingHttpClient client = new RetryableRibbonLoadBalancingHttpClient(delegate,
+				clientConfig, introspector, factory);
+		client.setLoadBalancer(lb);
+		client.setRibbonLoadBalancerContext(context);
+		ReflectionTestUtils.setField(client, "delegate", delegate);
+		return client;
+	}
+	
+	@Test
+	public void noServersFoundTest() throws Exception {
+		String serviceName = "noservers";
+		String host = serviceName;
+		int port = 80;
+		HttpMethod method = HttpMethod.POST;
+		URI uri = new URI("http://" + host + ":" + port);
+		CloseableHttpClient delegate = mock(CloseableHttpClient.class);
+		ILoadBalancer lb = mock(ILoadBalancer.class);
+		
+		RetryableRibbonLoadBalancingHttpClient client = setupClientForServerValidation(serviceName, host, port, delegate, lb);
+		RibbonApacheHttpRequest request = mock(RibbonApacheHttpRequest.class);
+		doReturn(null).when(lb).chooseServer(eq(serviceName));
+		doReturn(method).when(request).getMethod();
+		doReturn(uri).when(request).getURI();
+		doReturn(request).when(request).withNewUri(any(URI.class));
+		HttpUriRequest uriRequest = mock(HttpUriRequest.class);
+		doReturn(uriRequest).when(request).toRequest(any(RequestConfig.class));
+		try {
+			client.execute(request, null);
+			fail("Expected IOException for no servers available");
+		} catch (ClientException ex) {
+			assertThat(ex.getMessage(), containsString("Load balancer does not have available server for client"));
+		}
+	}
+	
+	@Test
+	public void invalidServerTest() throws Exception {
+		String serviceName = "noservers";
+		String host = serviceName;
+		int port = 80;
+		HttpMethod method = HttpMethod.POST;
+		URI uri = new URI("http://" + host + ":" + port);
+		CloseableHttpClient delegate = mock(CloseableHttpClient.class);
+		ILoadBalancer lb = mock(ILoadBalancer.class);
+		
+		RetryableRibbonLoadBalancingHttpClient client = setupClientForServerValidation(serviceName, host, port, delegate, lb);
+		RibbonApacheHttpRequest request = mock(RibbonApacheHttpRequest.class);
+		doReturn(new Server(null,8000)).when(lb).chooseServer(eq(serviceName));
+		doReturn(method).when(request).getMethod();
+		doReturn(uri).when(request).getURI();
+		doReturn(request).when(request).withNewUri(any(URI.class));
+		HttpUriRequest uriRequest = mock(HttpUriRequest.class);
+		doReturn(uriRequest).when(request).toRequest(any(RequestConfig.class));
+		try {
+			client.execute(request, null);
+			fail("Expected IOException for no servers available");
+		} catch (ClientException ex) {
+			assertThat(ex.getMessage(), containsString("Invalid Server for: "));
+		}
 	}
 
 	@Configuration
@@ -824,7 +963,7 @@ public class RibbonLoadBalancingHttpClientTests {
 		return requestConfigCaptor.getValue();
 	}
 
-	class MyBackOffPolicyFactory implements LoadBalancedBackOffPolicyFactory, BackOffPolicy {
+	class MyBackOffPolicy implements BackOffPolicy {
 
 		private int count = 0;
 
@@ -841,62 +980,47 @@ public class RibbonLoadBalancingHttpClientTests {
 		int getCount() {
 			return count;
 		}
-
-		@Override
-		public BackOffPolicy createBackOffPolicy(String service) {
-			return this;
-		}
 	}
 
-	class MyRetryListeners implements LoadBalancedRetryListenerFactory {
+	class MyRetryListener implements RetryListener {
 
 		private int onError = 0;
-
-		@Override
-		public RetryListener[] createRetryListeners(String service) {
-			return new RetryListener[] {new RetryListener() {
-				@Override
-				public <T, E extends Throwable> boolean open(RetryContext context, RetryCallback<T, E> callback) {
-					return true;
-				}
-
-				@Override
-				public <T, E extends Throwable> void close(RetryContext context, RetryCallback<T, E> callback, Throwable throwable) {
-
-				}
-
-				@Override
-				public <T, E extends Throwable> void onError(RetryContext context, RetryCallback<T, E> callback, Throwable throwable) {
-					onError++;
-				}
-			}};
-		}
 
 		int getOnError() {
 			return onError;
 		}
-	}
-
-	class MyRetryListenersNotRetry implements LoadBalancedRetryListenerFactory {
 
 		@Override
-		public RetryListener[] createRetryListeners(String service) {
-			return new RetryListener[] {new RetryListener() {
-				@Override
-				public <T, E extends Throwable> boolean open(RetryContext context, RetryCallback<T, E> callback) {
-					return false;
-				}
+		public <T, E extends Throwable> boolean open(RetryContext context, RetryCallback<T, E> callback) {
+			return true;
+		}
 
-				@Override
-				public <T, E extends Throwable> void close(RetryContext context, RetryCallback<T, E> callback, Throwable throwable) {
+		@Override
+		public <T, E extends Throwable> void close(RetryContext context, RetryCallback<T, E> callback, Throwable throwable) {
 
-				}
+		}
 
-				@Override
-				public <T, E extends Throwable> void onError(RetryContext context, RetryCallback<T, E> callback, Throwable throwable) {
+		@Override
+		public <T, E extends Throwable> void onError(RetryContext context, RetryCallback<T, E> callback, Throwable throwable) {
+			onError++;
+		}
+	}
 
-				}
-			}};
+	class MyRetryListenerNotRetry implements RetryListener {
+
+		@Override
+		public <T, E extends Throwable> boolean open(RetryContext context, RetryCallback<T, E> callback) {
+			return false;
+		}
+
+		@Override
+		public <T, E extends Throwable> void close(RetryContext context, RetryCallback<T, E> callback, Throwable throwable) {
+
+		}
+
+		@Override
+		public <T, E extends Throwable> void onError(RetryContext context, RetryCallback<T, E> callback, Throwable throwable) {
+
 		}
 	}
 

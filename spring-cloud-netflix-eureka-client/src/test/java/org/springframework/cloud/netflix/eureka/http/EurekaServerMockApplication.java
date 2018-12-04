@@ -16,12 +16,23 @@
 
 package org.springframework.cloud.netflix.eureka.http;
 
+import java.util.Collections;
+import java.util.HashMap;
+
+import com.netflix.appinfo.DataCenterInfo;
+import com.netflix.appinfo.InstanceInfo;
+import com.netflix.appinfo.LeaseInfo;
+import com.netflix.appinfo.MyDataCenterInfo;
+import com.netflix.discovery.shared.Application;
+import com.netflix.discovery.shared.Applications;
+
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.core.Ordered;
 import org.springframework.core.annotation.Order;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
 import org.springframework.http.converter.json.MappingJackson2HttpMessageConverter;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configuration.WebSecurityConfigurerAdapter;
@@ -38,10 +49,6 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
 
-import com.netflix.appinfo.InstanceInfo;
-import com.netflix.discovery.shared.Application;
-import com.netflix.discovery.shared.Applications;
-
 import static com.netflix.appinfo.InstanceInfo.DEFAULT_PORT;
 import static com.netflix.appinfo.InstanceInfo.DEFAULT_SECURE_PORT;
 import static org.springframework.util.Assert.isTrue;
@@ -55,9 +62,46 @@ import static org.springframework.util.Assert.isTrue;
 @RestController
 @SpringBootApplication
 public class EurekaServerMockApplication {
-	private static final InstanceInfo INFO = new InstanceInfo(null, null, null, null,
-			null, null, null, null, null, null, null, null, null, 0, null, null, null,
-			null, null, null, null, 0l, 0l, null, null);
+	private static final InstanceInfo INFO = InstanceInfo.Builder.newBuilder()
+			.setInstanceId("app1instance1")
+			.setAppName("app1")
+			.setAppNameForDeser("app1fordeser")
+			.setAppGroupName("app1group")
+			.setAppGroupNameForDeser("app1group1fordeser")
+			.setHostName("app1host1")
+			.setStatus(InstanceInfo.InstanceStatus.UP)
+			.setOverriddenStatus(InstanceInfo.InstanceStatus.DOWN)
+			.setIPAddr("127.0.0.1")
+			.setSID("app1sid")
+			.setPort(8080)
+			.setSecurePort(4443)
+			.enablePort(InstanceInfo.PortType.UNSECURE, true)
+			.setHomePageUrl("/", "http://localhost/")
+			.setHomePageUrlForDeser("http://localhost/")
+			.setStatusPageUrl("/status", "http://localhost/info")
+			.setStatusPageUrlForDeser("http://localhost/status")
+			.setHealthCheckUrls("/ping", "http://localhost/ping", null)
+			.setHealthCheckUrlsForDeser("http://localhost/ping", null)
+            .setVIPAddress("localhost:8080")
+			.setVIPAddressDeser("localhost:8080")
+			.setSecureVIPAddress("localhost:4443")
+			.setSecureVIPAddressDeser("localhost:4443")
+			.setDataCenterInfo(new MyDataCenterInfo(DataCenterInfo.Name.MyOwn))
+			.setLeaseInfo(LeaseInfo.Builder.newBuilder()
+                    .setDurationInSecs(30)
+					.setRenewalIntervalInSecs(30)
+					.setEvictionTimestamp(System.currentTimeMillis()+30000)
+					.setRenewalTimestamp(System.currentTimeMillis()-1000)
+					.setRegistrationTimestamp(System.currentTimeMillis()-2000)
+                    .build())
+            .add("metadatakey1", "metadatavalue1")
+			.setASGName("asg1")
+			.setIsCoordinatingDiscoveryServer(false)
+			.setLastUpdatedTimestamp(System.currentTimeMillis())
+			.setLastDirtyTimestamp(System.currentTimeMillis())
+			.setActionType(InstanceInfo.ActionType.ADDED)
+			.setNamespace("namespace1")
+			.build();
 
 	/**
 	 * Simulates Eureka Server own's serialization.
@@ -89,13 +133,16 @@ public class EurekaServerMockApplication {
 	@ResponseStatus(HttpStatus.OK)
 	@PutMapping(value = "/apps/{appName}/{id}", params = { "status",
 			"lastDirtyTimestamp" })
-	public InstanceInfo sendHeartBeat(@PathVariable String appName,
-			@PathVariable String id, @RequestParam String status,
-			@RequestParam String lastDirtyTimestamp,
-			@RequestParam(required = false) String overriddenstatus) {
-		return new InstanceInfo(null, null, null, null, null, null, null, null, null,
-				null, null, null, null, 0, null, null, null, null, null, null, null, 0l,
-				0l, null, null);
+	public ResponseEntity sendHeartBeat(@PathVariable String appName,
+										@PathVariable String id, @RequestParam String status,
+										@RequestParam String lastDirtyTimestamp,
+										@RequestParam(required = false) String overriddenstatus) {
+		if("fourOFour".equals(appName)) {
+			return new ResponseEntity(HttpStatus.NOT_FOUND);
+		}
+		return new ResponseEntity<InstanceInfo>(new InstanceInfo(null, null, null, null, null, null, null, null, null,
+				null, null, null, null, 0, null, null, null, null, null, null, null, new HashMap<String, String>(), 0l,
+				0l, null, null), HttpStatus.OK);
 	}
 
 	@ResponseStatus(HttpStatus.OK)
@@ -116,7 +163,9 @@ public class EurekaServerMockApplication {
 	@GetMapping(value = { "/apps", "/apps/delta", "/vips/{address}", "/svips/{address}" })
 	public Applications getApplications(@PathVariable(required = false) String address,
 			@RequestParam(required = false) String regions) {
-		return new Applications();
+		Applications applications = new Applications();
+		applications.addApplication(new Application("app1", Collections.singletonList(INFO)));
+		return applications;
 	}
 
 	@GetMapping(value = "/apps/{appName}")

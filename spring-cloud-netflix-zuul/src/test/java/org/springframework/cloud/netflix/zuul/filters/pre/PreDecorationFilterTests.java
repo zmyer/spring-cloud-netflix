@@ -28,6 +28,7 @@ import com.netflix.zuul.context.RequestContext;
 import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
+import org.junit.runner.RunWith;
 import org.mockito.Mock;
 
 import org.springframework.cloud.client.discovery.DiscoveryClient;
@@ -35,7 +36,10 @@ import org.springframework.cloud.netflix.zuul.filters.ProxyRequestHelper;
 import org.springframework.cloud.netflix.zuul.filters.ZuulProperties;
 import org.springframework.cloud.netflix.zuul.filters.ZuulProperties.ZuulRoute;
 import org.springframework.cloud.netflix.zuul.filters.discovery.DiscoveryClientRouteLocator;
+import org.springframework.cloud.test.ClassPathExclusions;
+import org.springframework.cloud.test.ModifiedClassPathRunner;
 import org.springframework.mock.web.MockHttpServletRequest;
+import org.springframework.util.MultiValueMap;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
@@ -49,6 +53,10 @@ import static org.springframework.cloud.netflix.zuul.filters.support.FilterConst
 /**
  * @author Dave Syer
  */
+@RunWith(ModifiedClassPathRunner.class)
+//This is needed for sensitiveHeadersOverrideEmpty, if Spring Security is on the classpath
+//then sensitive headers will always be present.
+@ClassPathExclusions({"spring-security-*.jar"})
 public class PreDecorationFilterTests {
 
 	private PreDecorationFilter filter;
@@ -68,6 +76,7 @@ public class PreDecorationFilterTests {
 	public void init() {
 		initMocks(this);
 		this.properties = new ZuulProperties();
+		this.proxyRequestHelper = new ProxyRequestHelper(properties);
 		this.routeLocator = new DiscoveryClientRouteLocator("/", this.discovery,
 				this.properties);
 		this.filter = new PreDecorationFilter(this.routeLocator, "/", this.properties,
@@ -615,7 +624,22 @@ public class PreDecorationFilterTests {
 		assertTrue(decodedRequestURI.equals("/oléדרעק"));
 	}
 
-	private Object getHeader(List<Pair<String, String>> headers, String key) {
+  @Test
+  public void headersAreProperlyIgnored() throws Exception {
+    proxyRequestHelper.addIgnoredHeaders("x-forwarded-host", "x-forwarded-port");
+    request.addHeader("x-forwarded-host", "B,127.0.0.1:8080");
+    request.addHeader("x-forwarded-port", "A,8080");
+    request.addHeader("x-forwarded-proto", "C,http");
+
+    MultiValueMap<String, String> result = proxyRequestHelper
+            .buildZuulRequestHeaders(request);
+
+    assertTrue(result.containsKey("x-forwarded-proto"));
+    assertFalse(result.containsKey("x-forwarded-host"));
+    assertFalse(result.containsKey("x-forwarded-port"));
+  }
+
+  private Object getHeader(List<Pair<String, String>> headers, String key) {
 		String value = null;
 		for (Pair<String, String> pair : headers) {
 			if (pair.first().toLowerCase().equals(key.toLowerCase())) {

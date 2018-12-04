@@ -17,6 +17,8 @@ package org.springframework.cloud.netflix.eureka.server.doc;
 
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collection;
+import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -45,6 +47,7 @@ import io.restassured.specification.FilterableResponseSpecification;
 import org.springframework.util.Base64Utils;
 import org.springframework.util.ObjectUtils;
 import org.springframework.util.StringUtils;
+import org.springframework.web.util.UriComponentsBuilder;
 import wiremock.com.google.common.base.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -208,6 +211,21 @@ class WireMockRestAssuredRequestAdapter implements Request {
 	}
 
 	@Override
+	public String getScheme() {
+		return UriComponentsBuilder.fromUriString(request.getURI()).build().getScheme();
+	}
+
+	@Override
+	public String getHost() {
+		return UriComponentsBuilder.fromUriString(request.getURI()).build().getHost();
+	}
+
+	@Override
+	public int getPort() {
+		return request.getPort();
+	}
+
+	@Override
 	public String getUrl() {
 		return request.getDerivedPath();
 	}
@@ -324,4 +342,18 @@ class WireMockRestAssuredRequestAdapter implements Request {
 		return false;
 	}
 
+	@Override
+	public boolean isMultipart() {
+		return false;
+	}
+
+	@Override
+	public Collection<Part> getParts() {
+		return Collections.emptyList();
+	}
+
+	@Override
+	public Part getPart(String s) {
+		return null;
+	}
 }

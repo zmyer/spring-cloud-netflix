@@ -19,6 +19,7 @@ package org.springframework.cloud.netflix.zuul.filters;
 import java.io.IOException;
 import java.util.List;
 
+import com.netflix.util.Pair;
 import com.netflix.zuul.context.RequestContext;
 import org.assertj.core.api.Assertions;
 import org.junit.After;
@@ -37,11 +38,13 @@ import org.springframework.util.LinkedMultiValueMap;
 import org.springframework.util.MultiValueMap;
 
 import static org.hamcrest.Matchers.contains;
+import static org.hamcrest.Matchers.containsInAnyOrder;
 import static org.hamcrest.Matchers.equalTo;
 import static org.hamcrest.Matchers.hasSize;
 import static org.hamcrest.Matchers.is;
 import static org.hamcrest.Matchers.notNullValue;
 import static org.hamcrest.Matchers.nullValue;
+import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertThat;
 import static org.junit.Assert.assertTrue;
 import static org.mockito.MockitoAnnotations.initMocks;
@@ -80,7 +83,7 @@ public class ProxyRequestHelperTests {
 		request.addHeader("multiName", "multiValue2");
 		RequestContext.getCurrentContext().setRequest(request);
 
-		TraceProxyRequestHelper helper = new TraceProxyRequestHelper();
+		TraceProxyRequestHelper helper = new TraceProxyRequestHelper(new ZuulProperties());
 		this.traceRepository = new InMemoryHttpTraceRepository();
 		helper.setTraces(this.traceRepository);
 
@@ -96,8 +99,9 @@ public class ProxyRequestHelperTests {
 	public void shouldDebugBodyDisabled() throws Exception {
 		RequestContext context = RequestContext.getCurrentContext();
 
-		ProxyRequestHelper helper = new ProxyRequestHelper();
-		helper.setTraceRequestBody(false);
+		ZuulProperties zuulProperties = new ZuulProperties();
+		zuulProperties.setTraceRequestBody(false);
+		ProxyRequestHelper helper = new ProxyRequestHelper(zuulProperties);
 
 		assertThat("shouldDebugBody wrong", helper.shouldDebugBody(context), is(false));
 	}
@@ -109,7 +113,7 @@ public class ProxyRequestHelperTests {
 		context.setChunkedRequestBody();
 		context.setRequest(request);
 
-		ProxyRequestHelper helper = new ProxyRequestHelper();
+		ProxyRequestHelper helper = new ProxyRequestHelper(new ZuulProperties());
 
 		assertThat("shouldDebugBody wrong", helper.shouldDebugBody(context), is(false));
 	}
@@ -121,7 +125,7 @@ public class ProxyRequestHelperTests {
 		context.setZuulEngineRan();
 		context.setRequest(request);
 
-		ProxyRequestHelper helper = new ProxyRequestHelper();
+		ProxyRequestHelper helper = new ProxyRequestHelper(new ZuulProperties());
 
 		assertThat("shouldDebugBody wrong", helper.shouldDebugBody(context), is(false));
 	}
@@ -133,7 +137,7 @@ public class ProxyRequestHelperTests {
 		RequestContext context = RequestContext.getCurrentContext();
 		context.setRequest(request);
 
-		ProxyRequestHelper helper = new ProxyRequestHelper();
+		ProxyRequestHelper helper = new ProxyRequestHelper(new ZuulProperties());
 
 		assertThat("shouldDebugBody wrong", helper.shouldDebugBody(context), is(true));
 	}
@@ -142,7 +146,7 @@ public class ProxyRequestHelperTests {
 	public void shouldDebugBodyNullRequest() throws Exception {
 		RequestContext context = RequestContext.getCurrentContext();
 
-		ProxyRequestHelper helper = new ProxyRequestHelper();
+		ProxyRequestHelper helper = new ProxyRequestHelper(new ZuulProperties());
 
 		assertThat("shouldDebugBody wrong", helper.shouldDebugBody(context), is(true));
 	}
@@ -154,7 +158,7 @@ public class ProxyRequestHelperTests {
 		RequestContext context = RequestContext.getCurrentContext();
 		context.setRequest(request);
 
-		ProxyRequestHelper helper = new ProxyRequestHelper();
+		ProxyRequestHelper helper = new ProxyRequestHelper(new ZuulProperties());
 
 		assertThat("shouldDebugBody wrong", helper.shouldDebugBody(context), is(true));
 	}
@@ -166,7 +170,7 @@ public class ProxyRequestHelperTests {
 		RequestContext context = RequestContext.getCurrentContext();
 		context.setRequest(request);
 
-		ProxyRequestHelper helper = new ProxyRequestHelper();
+		ProxyRequestHelper helper = new ProxyRequestHelper(new ZuulProperties());
 
 		assertThat("shouldDebugBody wrong", helper.shouldDebugBody(context), is(false));
 	}
@@ -178,7 +182,7 @@ public class ProxyRequestHelperTests {
 		request.addHeader("multiName", "multiValue1");
 		request.addHeader("multiName", "multiValue2");
 
-		TraceProxyRequestHelper helper = new TraceProxyRequestHelper();
+		TraceProxyRequestHelper helper = new TraceProxyRequestHelper(new ZuulProperties());
 		helper.setTraces(this.traceRepository);
 
 		MultiValueMap<String, String> headers = helper.buildZuulRequestHeaders(request);
@@ -199,13 +203,64 @@ public class ProxyRequestHelperTests {
 	public void buildZuulRequestHeadersRequestsGzipAndOnlyGzip() {
 		MockHttpServletRequest request = new MockHttpServletRequest("", "/");
 
-		ProxyRequestHelper helper = new ProxyRequestHelper();
+		ProxyRequestHelper helper = new ProxyRequestHelper(new ZuulProperties());
 
 		MultiValueMap<String, String> headers = helper.buildZuulRequestHeaders(request);
 
 		List<String> acceptEncodings = headers.get("accept-encoding");
 		assertThat(acceptEncodings, hasSize(1));
 		assertThat(acceptEncodings, contains("gzip"));
+	}
+
+	@Test
+	public void buildZuulRequestHeadersRequestsContentEncoding() {
+		MockHttpServletRequest request = new MockHttpServletRequest("", "/");
+		request.addHeader("content-encoding", "identity");
+
+		ProxyRequestHelper helper = new ProxyRequestHelper(new ZuulProperties());
+
+		MultiValueMap<String, String> headers = helper.buildZuulRequestHeaders(request);
+
+		List<String> contentEncodings = headers.get("content-encoding");
+		assertThat(contentEncodings, hasSize(1));
+		assertThat(contentEncodings, contains("identity"));
+	}
+
+	@Test
+	public void buildZuulRequestHeadersRequestsAcceptEncoding() {
+		MockHttpServletRequest request = new MockHttpServletRequest("", "/");
+		request.addHeader("accept-encoding", "identity");
+
+		ProxyRequestHelper helper = new ProxyRequestHelper(new ZuulProperties());
+
+		MultiValueMap<String, String> headers = helper.buildZuulRequestHeaders(request);
+
+		List<String> acceptEncodings = headers.get("accept-encoding");
+		assertThat(acceptEncodings, hasSize(1));
+		assertThat(acceptEncodings, contains("identity"));
+	}
+
+	@Test
+	public void addHostHeader() {
+		MockHttpServletRequest request = new MockHttpServletRequest("", "/");
+		request.addHeader("host", "foo.com");
+
+		ZuulProperties zuulProperties = new ZuulProperties();
+		zuulProperties.setAddHostHeader(true);
+		ProxyRequestHelper helper = new ProxyRequestHelper(zuulProperties);
+
+		MultiValueMap<String, String> headers = helper.buildZuulRequestHeaders(request);
+
+		List<String> acceptEncodings = headers.get("host");
+		assertThat(acceptEncodings, hasSize(1));
+		assertThat(acceptEncodings, contains("foo.com"));
+
+		zuulProperties.setAddHostHeader(false);
+		helper = new ProxyRequestHelper(zuulProperties);
+		headers = helper.buildZuulRequestHeaders(request);
+
+		acceptEncodings = headers.get("host");
+		assertNull(acceptEncodings);
 	}
 
 	@Test
@@ -217,13 +272,35 @@ public class ProxyRequestHelperTests {
 		context.setRequest(request);
 		context.setResponse(response);
 
-		ProxyRequestHelper helper = new ProxyRequestHelper();
+		ProxyRequestHelper helper = new ProxyRequestHelper(new ZuulProperties());
 
 		MultiValueMap<String, String> headers = new HttpHeaders();
 		headers.add(HttpHeaders.CONTENT_ENCODING.toLowerCase(), "gzip");
 
 		helper.setResponse(200, request.getInputStream(), headers);
 		assertTrue(context.getResponseGZipped());
+	}
+
+	@Test
+	public void setResponseShouldSetOriginResponseHeaders() throws IOException {
+		MockHttpServletRequest request = new MockHttpServletRequest("POST", "/");
+		MockHttpServletResponse response = new MockHttpServletResponse();
+
+		RequestContext context = RequestContext.getCurrentContext();
+		context.setRequest(request);
+		context.setResponse(response);
+
+		ProxyRequestHelper helper = new ProxyRequestHelper(new ZuulProperties());
+
+		MultiValueMap<String, String> headers = new HttpHeaders();
+		headers.add(HttpHeaders.CONTENT_TYPE, "text/plain");
+		headers.add("some-header", "some-value");
+
+		helper.setResponse(200, request.getInputStream(), headers);
+		assertThat(context.getOriginResponseHeaders(), containsInAnyOrder(
+				new Pair<>(HttpHeaders.CONTENT_TYPE, "text/plain"),
+				new Pair<>("some-header", "some-value")
+		));
 	}
 
 	@Test
@@ -235,7 +312,7 @@ public class ProxyRequestHelperTests {
 		context.setRequest(request);
 		context.setResponse(response);
 
-		ProxyRequestHelper helper = new ProxyRequestHelper();
+		ProxyRequestHelper helper = new ProxyRequestHelper(new ZuulProperties());
 
 		MultiValueMap<String, String> headers = new HttpHeaders();
 		headers.add(HttpHeaders.CONTENT_ENCODING, "gzip");
@@ -250,7 +327,7 @@ public class ProxyRequestHelperTests {
 		params.add("a", "1234");
 		params.add("b", "5678");
 
-		String queryString = new ProxyRequestHelper().getQueryString(params);
+		String queryString = new ProxyRequestHelper(new ZuulProperties()).getQueryString(params);
 
 		assertThat(queryString, is("?a=1234&b=5678"));
 	}
@@ -260,7 +337,7 @@ public class ProxyRequestHelperTests {
 		MultiValueMap<String, String> params = new LinkedMultiValueMap<>();
 		params.add("wsdl", "");
 
-		String queryString = new ProxyRequestHelper().getQueryString(params);
+		String queryString = new ProxyRequestHelper(new ZuulProperties()).getQueryString(params);
 
 		assertThat(queryString, is("?wsdl"));
 	}
@@ -270,7 +347,7 @@ public class ProxyRequestHelperTests {
 		MultiValueMap<String, String> params = new LinkedMultiValueMap<>();
 		params.add("foo", "weird#chars");
 
-		String queryString = new ProxyRequestHelper().getQueryString(params);
+		String queryString = new ProxyRequestHelper(new ZuulProperties()).getQueryString(params);
 
 		assertThat(queryString, is("?foo=weird%23chars"));
 	}
@@ -282,7 +359,7 @@ public class ProxyRequestHelperTests {
 		params.add("foobar", "bam");
 		params.add("foo\fbar", "bat"); // form feed is the colon replacement char
 
-		String queryString = new ProxyRequestHelper().getQueryString(params);
+		String queryString = new ProxyRequestHelper(new ZuulProperties()).getQueryString(params);
 
 		assertThat(queryString, is("?foo:bar=baz&foobar=bam&foo%0Cbar=bat"));
 	}
@@ -298,7 +375,7 @@ public class ProxyRequestHelperTests {
 		context.setRequest(request);
 		context.set(REQUEST_URI_KEY, decodedURI);
 
-		final String requestURI = new ProxyRequestHelper().buildZuulRequestURI(request);
+		final String requestURI = new ProxyRequestHelper(new ZuulProperties()).buildZuulRequestURI(request);
 		assertThat(requestURI, equalTo(encodedURI));
 	}
 
@@ -312,7 +389,7 @@ public class ProxyRequestHelperTests {
 		context.setRequest(request);
 		context.set(REQUEST_URI_KEY, decodedURI);
 
-		final String requestURI = new ProxyRequestHelper().buildZuulRequestURI(request);
+		final String requestURI = new ProxyRequestHelper(new ZuulProperties()).buildZuulRequestURI(request);
 		assertThat(requestURI, equalTo(encodedURI));
 	}
 
@@ -326,7 +403,7 @@ public class ProxyRequestHelperTests {
 		RequestContext context = RequestContext.getCurrentContext();
 		context.set(REQUEST_URI_KEY, requestURI);
 
-		ProxyRequestHelper helper = new ProxyRequestHelper();
+		ProxyRequestHelper helper = new ProxyRequestHelper(new ZuulProperties());
 
 		String uri = helper.buildZuulRequestURI(request);
 
@@ -342,7 +419,7 @@ public class ProxyRequestHelperTests {
 		RequestContext context = RequestContext.getCurrentContext();
 		context.set(REQUEST_URI_KEY, requestURI);
 
-		ProxyRequestHelper helper = new ProxyRequestHelper();
+		ProxyRequestHelper helper = new ProxyRequestHelper(new ZuulProperties());
 
 		String uri = helper.buildZuulRequestURI(request);
 

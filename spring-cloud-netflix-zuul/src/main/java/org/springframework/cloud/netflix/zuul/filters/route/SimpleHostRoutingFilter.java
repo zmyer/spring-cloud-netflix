@@ -22,6 +22,7 @@ import java.net.URL;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.regex.Pattern;
 import java.util.Timer;
 import java.util.TimerTask;
 
@@ -29,12 +30,17 @@ import javax.annotation.PostConstruct;
 import javax.annotation.PreDestroy;
 import javax.servlet.http.HttpServletRequest;
 
+import com.netflix.client.ClientException;
+import com.netflix.zuul.ZuulFilter;
+import com.netflix.zuul.context.RequestContext;
+import com.netflix.zuul.exception.ZuulException;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 import org.apache.http.Header;
 import org.apache.http.HttpHost;
 import org.apache.http.HttpRequest;
 import org.apache.http.HttpResponse;
+import org.apache.http.client.HttpClient;
 import org.apache.http.client.config.CookieSpecs;
 import org.apache.http.client.config.RequestConfig;
 import org.apache.http.client.methods.CloseableHttpResponse;
@@ -48,6 +54,7 @@ import org.apache.http.impl.client.CloseableHttpClient;
 import org.apache.http.message.BasicHeader;
 import org.apache.http.message.BasicHttpEntityEnclosingRequest;
 import org.apache.http.message.BasicHttpRequest;
+
 import org.springframework.cloud.commons.httpclient.ApacheHttpClientConnectionManagerFactory;
 import org.springframework.cloud.commons.httpclient.ApacheHttpClientFactory;
 import org.springframework.cloud.context.environment.EnvironmentChangeEvent;
@@ -55,13 +62,12 @@ import org.springframework.cloud.netflix.zuul.filters.ProxyRequestHelper;
 import org.springframework.cloud.netflix.zuul.filters.ZuulProperties;
 import org.springframework.cloud.netflix.zuul.filters.ZuulProperties.Host;
 import org.springframework.cloud.netflix.zuul.util.ZuulRuntimeException;
-import org.springframework.context.event.EventListener;
+import org.springframework.context.ApplicationListener;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.HttpStatus;
 import org.springframework.util.LinkedMultiValueMap;
 import org.springframework.util.MultiValueMap;
 import org.springframework.util.StringUtils;
-
-import com.netflix.zuul.ZuulFilter;
-import com.netflix.zuul.context.RequestContext;
 
 import static org.springframework.cloud.netflix.zuul.filters.support.FilterConstants.REQUEST_ENTITY_KEY;
 import static org.springframework.cloud.netflix.zuul.filters.support.FilterConstants.ROUTE_TYPE;
@@ -76,9 +82,11 @@ import static org.springframework.cloud.netflix.zuul.filters.support.FilterConst
  * @author Bilal Alp
  * @author Gang Li
  */
-public class SimpleHostRoutingFilter extends ZuulFilter {
+public class SimpleHostRoutingFilter extends ZuulFilter implements ApplicationListener<EnvironmentChangeEvent> {
 
 	private static final Log log = LogFactory.getLog(SimpleHostRoutingFilter.class);
+
+	private static final Pattern MULTIPLE_SLASH_PATTERN = Pattern.compile("/{2,}");
 
 	private final Timer connectionManagerTimer = new Timer(
 			"SimpleHostRoutingFilter.connectionManagerTimer", true);
@@ -93,8 +101,15 @@ public class SimpleHostRoutingFilter extends ZuulFilter {
 	private HttpClientConnectionManager connectionManager;
 	private CloseableHttpClient httpClient;
 	private boolean customHttpClient = false;
+	private boolean useServlet31 = true;
 
-	@EventListener
+	@Override
+	@SuppressWarnings("Deprecation")
+	public void onApplicationEvent(EnvironmentChangeEvent event) {
+		onPropertyChange(event);
+	}
+
+	@Deprecated
 	public void onPropertyChange(EnvironmentChangeEvent event) {
 		if(!customHttpClient) {
 			boolean createNewClient = false;
@@ -127,6 +142,7 @@ public class SimpleHostRoutingFilter extends ZuulFilter {
 				.isForceOriginalQueryStringEncoding();
 		this.connectionManagerFactory = connectionManagerFactory;
 		this.httpClientFactory = httpClientFactory;
+		checkServletVersion();
 	}
 
 	public SimpleHostRoutingFilter(ProxyRequestHelper helper, ZuulProperties properties,
@@ -138,6 +154,7 @@ public class SimpleHostRoutingFilter extends ZuulFilter {
 				.isForceOriginalQueryStringEncoding();
 		this.httpClient = httpClient;
 		this.customHttpClient = true;
+		checkServletVersion();
 	}
 
 	@PostConstruct
@@ -193,7 +210,7 @@ public class SimpleHostRoutingFilter extends ZuulFilter {
 				.buildZuulRequestQueryParams(request);
 		String verb = getVerb(request);
 		InputStream requestEntity = getRequestBody(request);
-		if (request.getContentLength() < 0) {
+		if (getContentLength(request) < 0) {
 			context.setChunkedRequestBody();
 		}
 
@@ -206,9 +223,53 @@ public class SimpleHostRoutingFilter extends ZuulFilter {
 			setResponse(response);
 		}
 		catch (Exception ex) {
-			throw new ZuulRuntimeException(ex);
+			throw new ZuulRuntimeException(handleException(ex));
 		}
 		return null;
+	}
+
+	protected ZuulException handleException(Exception ex) {
+		int statusCode = HttpStatus.INTERNAL_SERVER_ERROR.value();
+		Throwable cause = ex;
+		String message = ex.getMessage();
+
+		ClientException clientException = findClientException(ex);
+
+		if (clientException != null) {
+			if (clientException
+					.getErrorType() == ClientException.ErrorType.SERVER_THROTTLED) {
+				statusCode = HttpStatus.SERVICE_UNAVAILABLE.value();
+			}
+			cause = clientException;
+			message = clientException.getErrorType().toString();
+		}
+		return new ZuulException(cause, "Forwarding error", statusCode, message);
+	}
+
+	protected ClientException findClientException(Throwable t) {
+		if (t == null) {
+			return null;
+		}
+		if (t instanceof ClientException) {
+			return (ClientException) t;
+		}
+		return findClientException(t.getCause());
+	}
+
+
+	protected void checkServletVersion() {
+		// To support Servlet API 3.1 we need to check if getContentLengthLong exists
+		// Spring 5 minimum support is 3.0, so this stays
+		try {
+			HttpServletRequest.class.getMethod("getContentLengthLong");
+			useServlet31 = true;
+		} catch(NoSuchMethodException e) {
+			useServlet31 = false;
+		}
+	}
+
+	protected void setUseServlet31(boolean useServlet31) {
+		this.useServlet31 = useServlet31;
 	}
 
 	protected HttpClientConnectionManager getConnectionManager() {
@@ -217,6 +278,7 @@ public class SimpleHostRoutingFilter extends ZuulFilter {
 
 	protected CloseableHttpClient newClient() {
 		final RequestConfig requestConfig = RequestConfig.custom()
+				.setConnectionRequestTimeout(this.hostProperties.getConnectionRequestTimeoutMillis())
 				.setSocketTimeout(this.hostProperties.getSocketTimeoutMillis())
 				.setConnectTimeout(this.hostProperties.getConnectTimeoutMillis())
 				.setCookieSpec(CookieSpecs.IGNORE_COOKIES).build();
@@ -233,8 +295,8 @@ public class SimpleHostRoutingFilter extends ZuulFilter {
 				requestEntity);
 		URL host = RequestContext.getCurrentContext().getRouteHost();
 		HttpHost httpHost = getHttpHost(host);
-		uri = StringUtils.cleanPath((host.getPath() + uri).replaceAll("/{2,}", "/"));
-		int contentLength = request.getContentLength();
+		uri = StringUtils.cleanPath(MULTIPLE_SLASH_PATTERN.matcher(host.getPath() + uri).replaceAll("/"));
+		long contentLength = getContentLength(request);
 
 		ContentType contentType = null;
 
@@ -380,5 +442,20 @@ public class SimpleHostRoutingFilter extends ZuulFilter {
 	 */
 	boolean isSslHostnameValidationEnabled() {
 		return this.sslHostnameValidationEnabled;
+	}
+
+	// Get the header value as a long in order to more correctly proxy very large requests
+	protected long getContentLength(HttpServletRequest request) {
+		if(useServlet31){
+			return request.getContentLengthLong();
+		}
+		String contentLengthHeader = request.getHeader(HttpHeaders.CONTENT_LENGTH);
+		if (contentLengthHeader != null) {
+			try {
+				return Long.parseLong(contentLengthHeader);
+			}
+			catch (NumberFormatException e){}
+		}
+		return request.getContentLength();
 	}
 }

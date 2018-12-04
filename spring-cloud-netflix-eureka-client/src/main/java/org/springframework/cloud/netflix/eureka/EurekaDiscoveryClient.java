@@ -22,32 +22,39 @@ import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 
-import org.springframework.cloud.client.DefaultServiceInstance;
-import org.springframework.cloud.client.ServiceInstance;
-import org.springframework.cloud.client.discovery.DiscoveryClient;
-import org.springframework.util.Assert;
-
 import com.netflix.appinfo.EurekaInstanceConfig;
 import com.netflix.appinfo.InstanceInfo;
 import com.netflix.discovery.EurekaClient;
+import com.netflix.discovery.EurekaClientConfig;
 import com.netflix.discovery.shared.Application;
 import com.netflix.discovery.shared.Applications;
+
+import org.springframework.cloud.client.DefaultServiceInstance;
+import org.springframework.cloud.client.ServiceInstance;
+import org.springframework.cloud.client.discovery.DiscoveryClient;
+import org.springframework.core.Ordered;
+import org.springframework.util.Assert;
 
 import static com.netflix.appinfo.InstanceInfo.PortType.SECURE;
 
 /**
  * @author Spencer Gibb
+ * @author Tim Ysewyn
  */
 public class EurekaDiscoveryClient implements DiscoveryClient {
 
 	public static final String DESCRIPTION = "Spring Cloud Eureka Discovery Client";
 
-	private final EurekaInstanceConfig config;
-
 	private final EurekaClient eurekaClient;
+	private final EurekaClientConfig clientConfig;
 
+	@Deprecated
 	public EurekaDiscoveryClient(EurekaInstanceConfig config, EurekaClient eurekaClient) {
-		this.config = config;
+		this(eurekaClient, eurekaClient.getEurekaClientConfig());
+	}
+
+	public EurekaDiscoveryClient(EurekaClient eurekaClient, EurekaClientConfig clientConfig) {
+		this.clientConfig = clientConfig;
 		this.eurekaClient = eurekaClient;
 	}
 
@@ -77,6 +84,11 @@ public class EurekaDiscoveryClient implements DiscoveryClient {
 
 		public InstanceInfo getInstanceInfo() {
 			return instance;
+		}
+
+		@Override
+		public String getInstanceId() {
+			return this.instance.getId();
 		}
 
 		@Override
@@ -132,4 +144,8 @@ public class EurekaDiscoveryClient implements DiscoveryClient {
 		return names;
 	}
 
+	@Override
+	public int getOrder() {
+		return clientConfig instanceof Ordered ? ((Ordered) clientConfig).getOrder() : DiscoveryClient.DEFAULT_ORDER;
+	}
 }

@@ -16,27 +16,37 @@
 
 package org.springframework.cloud.netflix.sidecar;
 
+import org.apache.http.client.HttpClient;
+import org.apache.http.conn.ssl.NoopHostnameVerifier;
+import org.apache.http.impl.client.CloseableHttpClient;
+import org.apache.http.impl.client.HttpClients;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingClass;
 import static org.springframework.cloud.commons.util.IdUtils.getDefaultInstanceId;
 
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.boot.autoconfigure.AutoConfigureAfter;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnClass;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
+import org.springframework.boot.web.client.RestTemplateBuilder;
 import org.springframework.cloud.client.actuator.HasFeatures;
 import org.springframework.cloud.commons.util.InetUtils;
 import org.springframework.cloud.netflix.eureka.EurekaInstanceConfigBean;
+import org.springframework.cloud.netflix.eureka.metadata.DefaultManagementMetadataProvider;
+import org.springframework.cloud.netflix.eureka.metadata.ManagementMetadata;
+import org.springframework.cloud.netflix.eureka.metadata.ManagementMetadataProvider;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.core.env.ConfigurableEnvironment;
+import org.springframework.http.client.HttpComponentsClientHttpRequestFactory;
 import org.springframework.util.StringUtils;
 
 import com.netflix.appinfo.HealthCheckHandler;
 import com.netflix.discovery.EurekaClientConfig;
+import org.springframework.web.client.RestTemplate;
 
-import java.net.InetAddress;
-import java.net.UnknownHostException;
+import java.util.Map;
 
 /**
  * Sidecar Configuration that setting up {@link com.netflix.appinfo.EurekaInstanceConfig}.
@@ -52,6 +62,7 @@ import java.net.UnknownHostException;
  *
  * @author Spencer Gibb
  * @author Ryan Baxter
+ * @author Fabrizio Di Napoli
  *
  * @see EurekaInstanceConfigBeanConfiguration
  */
@@ -79,8 +90,17 @@ public class SidecarConfiguration {
 		@Autowired
 		private InetUtils inetUtils;
 
-		@Value("${management.port:${MANAGEMENT_PORT:${server.port:${SERVER_PORT:${PORT:8080}}}}}")
-		private int managementPort = 8080;
+		@Value(value = "${management.port:${MANAGEMENT_PORT:#{null}}}")
+		private Integer managementPort;
+
+		@Value("${server.port:${SERVER_PORT:${PORT:8080}}}")
+		private int serverPort = 8080;
+
+		@Value("${management.context-path:${MANAGEMENT_CONTEXT_PATH:#{null}}}")
+		private String managementContextPath;
+
+		@Value("${server.context-path:${SERVER_CONTEXT_PATH:/}}")
+		private String serverContextPath = "/";
 
 		@Value("${eureka.instance.hostname:${EUREKA_INSTANCE_HOSTNAME:}}")
 		private String hostname;
@@ -89,7 +109,13 @@ public class SidecarConfiguration {
 		private ConfigurableEnvironment env;
 
 		@Bean
-		public EurekaInstanceConfigBean eurekaInstanceConfigBean() {
+		@ConditionalOnMissingBean
+		public ManagementMetadataProvider serviceManagementMetadataProvider() {
+			return new DefaultManagementMetadataProvider();
+		}
+
+		@Bean
+		public EurekaInstanceConfigBean eurekaInstanceConfigBean(ManagementMetadataProvider managementMetadataProvider) {
 			EurekaInstanceConfigBean config = new EurekaInstanceConfigBean(inetUtils);
 			String springAppName = this.env.getProperty("spring.application.name", "");
 			int port = this.sidecarProperties.getPort();
@@ -112,10 +138,20 @@ public class SidecarConfiguration {
 				config.setIpAddress(ipAddress);
 			}
 			String scheme = config.getSecurePortEnabled() ? "https" : "http";
-			config.setStatusPageUrl(scheme + "://" + config.getHostname() + ":"
-					+ this.managementPort + config.getStatusPageUrlPath());
-			config.setHealthCheckUrl(scheme + "://" + config.getHostname() + ":"
-					+ this.managementPort + config.getHealthCheckUrlPath());
+			ManagementMetadata metadata = managementMetadataProvider.get(config, serverPort,
+					serverContextPath, managementContextPath, managementPort);
+
+			if(metadata != null) {
+				config.setStatusPageUrl(metadata.getStatusPageUrl());
+				config.setHealthCheckUrl(metadata.getHealthCheckUrl());
+				if(config.isSecurePortEnabled()) {
+					config.setSecureHealthCheckUrl(metadata.getSecureHealthCheckUrl());
+				}
+				Map<String, String> metadataMap = config.getMetadataMap();
+				if (metadataMap.get("management.port") == null) {
+					metadataMap.put("management.port", String.valueOf(metadata.getManagementPort()));
+				}
+			}
 			config.setHomePageUrl(scheme + "://" + config.getHostname() + ":" + port
 					+ config.getHomePageUrlPath());
 			return config;
@@ -126,7 +162,27 @@ public class SidecarConfiguration {
 				final LocalApplicationHealthIndicator healthIndicator) {
 			return new LocalApplicationHealthCheckHandler(healthIndicator);
 		}
+	}
 
+	@Bean
+	@ConditionalOnMissingClass("org.apache.http.client.HttpClient")
+	public RestTemplate restTemplate() {
+		return new RestTemplateBuilder().build();
+	}
+
+	@Bean
+	@ConditionalOnClass(HttpClient.class)
+	public RestTemplate sslRestTemplate(SidecarProperties properties) {
+		RestTemplateBuilder builder = new RestTemplateBuilder();
+		if(properties.acceptAllSslCertificates()) {
+			CloseableHttpClient httpClient = HttpClients.custom()
+					.setSSLHostnameVerifier(new NoopHostnameVerifier())
+					.build();
+			HttpComponentsClientHttpRequestFactory requestFactory = new HttpComponentsClientHttpRequestFactory();
+			requestFactory.setHttpClient(httpClient);
+			builder = builder.requestFactory(() -> requestFactory);
+		}
+		return builder.build();
 	}
 
 	@Bean

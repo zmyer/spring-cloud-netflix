@@ -1,5 +1,5 @@
 /*
- * Copyright 2013-2017 the original author or authors.
+ * Copyright 2013-2018 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -19,11 +19,13 @@ package org.springframework.cloud.netflix.zuul;
 
 import java.util.Collection;
 import java.util.Map;
+import java.util.List;
 
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnClass;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingClass;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.boot.autoconfigure.web.ServerProperties;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
@@ -32,6 +34,8 @@ import org.springframework.boot.web.servlet.error.ErrorController;
 import org.springframework.cloud.client.actuator.HasFeatures;
 import org.springframework.cloud.client.discovery.event.HeartbeatEvent;
 import org.springframework.cloud.client.discovery.event.HeartbeatMonitor;
+import org.springframework.cloud.client.discovery.event.InstanceRegisteredEvent;
+import org.springframework.cloud.client.discovery.event.ParentHeartbeatEvent;
 import org.springframework.cloud.context.scope.refresh.RefreshScopeRefreshedEvent;
 import org.springframework.cloud.netflix.ribbon.SpringClientFactory;
 import org.springframework.cloud.netflix.zuul.filters.CompositeRouteLocator;
@@ -56,6 +60,9 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Primary;
 import org.springframework.context.event.ContextRefreshedEvent;
+import org.springframework.web.cors.CorsConfiguration;
+import org.springframework.web.servlet.config.annotation.CorsRegistry;
+import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
 
 import com.netflix.zuul.FilterLoader;
 import com.netflix.zuul.ZuulFilter;
@@ -65,6 +72,8 @@ import com.netflix.zuul.monitoring.CounterFactory;
 import com.netflix.zuul.monitoring.TracerFactory;
 
 import io.micrometer.core.instrument.MeterRegistry;
+
+import static java.util.Collections.emptyList;
 
 /**
  * @author Spencer Gibb
@@ -88,6 +97,11 @@ public class ZuulServerAutoConfiguration {
 	@Autowired(required = false)
 	private ErrorController errorController;
 
+	private Map<String, CorsConfiguration> corsConfigurations;
+
+	@Autowired(required = false)
+	private List<WebMvcConfigurer> configurers = emptyList();
+
 	@Bean
 	public HasFeatures zuulFeature() {
 		return HasFeatures.namedFeature("Zuul (Simple)", ZuulServerAutoConfiguration.class);
@@ -103,7 +117,7 @@ public class ZuulServerAutoConfiguration {
 	@Bean
 	@ConditionalOnMissingBean(SimpleRouteLocator.class)
 	public SimpleRouteLocator simpleRouteLocator() {
-		return new SimpleRouteLocator(this.server.getServlet().getServletPrefix(),
+		return new SimpleRouteLocator(this.server.getServlet().getContextPath(),
 				this.zuulProperties);
 	}
 
@@ -116,7 +130,18 @@ public class ZuulServerAutoConfiguration {
 	public ZuulHandlerMapping zuulHandlerMapping(RouteLocator routes) {
 		ZuulHandlerMapping mapping = new ZuulHandlerMapping(routes, zuulController());
 		mapping.setErrorController(this.errorController);
+		mapping.setCorsConfigurations(getCorsConfigurations());
 		return mapping;
+	}
+
+	protected final Map<String, CorsConfiguration> getCorsConfigurations() {
+		if (this.corsConfigurations == null) {
+			ZuulCorsRegistry registry = new ZuulCorsRegistry();
+			this.configurers
+					.forEach(configurer -> configurer.addCorsMappings(registry));
+			this.corsConfigurations = registry.getCorsConfigurations();
+		}
+		return this.corsConfigurations;
 	}
 
 	@Bean
@@ -204,6 +229,7 @@ public class ZuulServerAutoConfiguration {
 
 		@Bean
 		@ConditionalOnBean(MeterRegistry.class)
+		@ConditionalOnMissingBean(CounterFactory.class)
 		public CounterFactory counterFactory(MeterRegistry meterRegistry) {
 			return new DefaultCounterFactory(meterRegistry);
 		}
@@ -213,6 +239,7 @@ public class ZuulServerAutoConfiguration {
 	protected static class ZuulMetricsConfiguration {
 
 		@Bean
+		@ConditionalOnMissingClass("io.micrometer.core.instrument.MeterRegistry")
 		@ConditionalOnMissingBean(CounterFactory.class)
 		public CounterFactory counterFactory() {
 			return new EmptyCounterFactory();
@@ -238,16 +265,36 @@ public class ZuulServerAutoConfiguration {
 		public void onApplicationEvent(ApplicationEvent event) {
 			if (event instanceof ContextRefreshedEvent
 					|| event instanceof RefreshScopeRefreshedEvent
-					|| event instanceof RoutesRefreshedEvent) {
-				this.zuulHandlerMapping.setDirty(true);
+					|| event instanceof RoutesRefreshedEvent
+					|| event instanceof InstanceRegisteredEvent) {
+				reset();
+			}
+			else if (event instanceof ParentHeartbeatEvent) {
+				ParentHeartbeatEvent e = (ParentHeartbeatEvent) event;
+				resetIfNeeded(e.getValue());
 			}
 			else if (event instanceof HeartbeatEvent) {
-				if (this.heartbeatMonitor.update(((HeartbeatEvent) event).getValue())) {
-					this.zuulHandlerMapping.setDirty(true);
-				}
+				HeartbeatEvent e = (HeartbeatEvent) event;
+				resetIfNeeded(e.getValue());
 			}
 		}
 
+		private void resetIfNeeded(Object value) {
+			if (this.heartbeatMonitor.update(value)) {
+				reset();
+			}
+		}
+
+		private void reset() {
+			this.zuulHandlerMapping.setDirty(true);
+		}
 	}
 
+	private static class ZuulCorsRegistry extends CorsRegistry {
+
+		@Override
+		protected Map<String, CorsConfiguration> getCorsConfigurations() {
+			return super.getCorsConfigurations();
+		}
+	}
 }

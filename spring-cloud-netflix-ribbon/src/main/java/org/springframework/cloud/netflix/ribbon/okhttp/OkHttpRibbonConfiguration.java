@@ -25,13 +25,12 @@ import org.springframework.boot.autoconfigure.condition.ConditionalOnClass;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingClass;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
-import org.springframework.cloud.client.loadbalancer.LoadBalancedBackOffPolicyFactory;
-import org.springframework.cloud.client.loadbalancer.LoadBalancedRetryListenerFactory;
-import org.springframework.cloud.client.loadbalancer.LoadBalancedRetryPolicyFactory;
+import org.springframework.cloud.client.loadbalancer.LoadBalancedRetryFactory;
 import org.springframework.cloud.commons.httpclient.OkHttpClientConnectionPoolFactory;
 import org.springframework.cloud.commons.httpclient.OkHttpClientFactory;
 import org.springframework.cloud.netflix.ribbon.RibbonClientName;
 import org.springframework.cloud.netflix.ribbon.RibbonProperties;
+import org.springframework.cloud.netflix.ribbon.RibbonLoadBalancerContext;
 import org.springframework.cloud.netflix.ribbon.ServerIntrospector;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -96,19 +95,18 @@ public class OkHttpRibbonConfiguration {
 	@Bean
 	@ConditionalOnMissingBean(AbstractLoadBalancerAwareClient.class)
 	@ConditionalOnClass(name = "org.springframework.retry.support.RetryTemplate")
-	public RetryableOkHttpLoadBalancingClient okHttpLoadBalancingClient(
+	public RetryableOkHttpLoadBalancingClient retryableOkHttpLoadBalancingClient(
 		IClientConfig config,
 		ServerIntrospector serverIntrospector,
 		ILoadBalancer loadBalancer,
 		RetryHandler retryHandler,
-		LoadBalancedRetryPolicyFactory loadBalancedRetryPolicyFactory,
-		OkHttpClient delegate,
-		LoadBalancedBackOffPolicyFactory loadBalancedBackOffPolicyFactory,
-		LoadBalancedRetryListenerFactory loadBalancedRetryListenerFactory) {
+		LoadBalancedRetryFactory loadBalancedRetryFactory,
+		OkHttpClient delegate, RibbonLoadBalancerContext ribbonLoadBalancerContext) {
 		RetryableOkHttpLoadBalancingClient client = new RetryableOkHttpLoadBalancingClient(delegate, config,
-				serverIntrospector, loadBalancedRetryPolicyFactory, loadBalancedBackOffPolicyFactory, loadBalancedRetryListenerFactory);
+				serverIntrospector, loadBalancedRetryFactory);
 		client.setLoadBalancer(loadBalancer);
 		client.setRetryHandler(retryHandler);
+		client.setRibbonLoadBalancerContext(ribbonLoadBalancerContext);
 		Monitors.registerObject("Client_" + this.name, client);
 		return client;
 	}
@@ -116,7 +114,7 @@ public class OkHttpRibbonConfiguration {
 	@Bean
 	@ConditionalOnMissingBean(AbstractLoadBalancerAwareClient.class)
 	@ConditionalOnMissingClass(value = "org.springframework.retry.support.RetryTemplate")
-	public OkHttpLoadBalancingClient retryableOkHttpLoadBalancingClient(
+	public OkHttpLoadBalancingClient okHttpLoadBalancingClient(
 		IClientConfig config,
 		ServerIntrospector serverIntrospector, ILoadBalancer loadBalancer,
 		RetryHandler retryHandler, OkHttpClient delegate) {

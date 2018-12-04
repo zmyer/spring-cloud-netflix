@@ -21,16 +21,19 @@ import okhttp3.Response;
 import okhttp3.ResponseBody;
 
 import java.net.URI;
-import org.apache.commons.lang.BooleanUtils;
+import org.apache.commons.logging.Log;
+import org.apache.commons.logging.LogFactory;
 import org.springframework.cloud.client.ServiceInstance;
 import org.springframework.cloud.client.loadbalancer.InterceptorRetryPolicy;
-import org.springframework.cloud.client.loadbalancer.LoadBalancedBackOffPolicyFactory;
+import org.springframework.cloud.client.loadbalancer.LoadBalancedRecoveryCallback;
 import org.springframework.cloud.client.loadbalancer.LoadBalancedRetryContext;
-import org.springframework.cloud.client.loadbalancer.LoadBalancedRetryListenerFactory;
+import org.springframework.cloud.client.loadbalancer.LoadBalancedRetryFactory;
 import org.springframework.cloud.client.loadbalancer.LoadBalancedRetryPolicy;
-import org.springframework.cloud.client.loadbalancer.LoadBalancedRetryPolicyFactory;
-import org.springframework.cloud.client.loadbalancer.RibbonRecoveryCallback;
 import org.springframework.cloud.client.loadbalancer.ServiceInstanceChooser;
+import org.springframework.cloud.netflix.ribbon.RibbonLoadBalancerContext;
+import org.springframework.cloud.netflix.ribbon.RibbonStatsRecorder;
+import org.springframework.cloud.netflix.ribbon.ServerIntrospector;
+import org.springframework.cloud.netflix.ribbon.RibbonLoadBalancerClient.RibbonServer;
 import org.springframework.cloud.netflix.ribbon.support.ContextAwareRequest;
 import org.springframework.http.HttpRequest;
 import org.springframework.retry.RecoveryCallback;
@@ -42,52 +45,26 @@ import org.springframework.retry.backoff.NoBackOffPolicy;
 import org.springframework.retry.policy.NeverRetryPolicy;
 import org.springframework.retry.support.RetryTemplate;
 import org.springframework.web.util.UriComponentsBuilder;
-import org.springframework.cloud.netflix.ribbon.RibbonLoadBalancerClient;
-import org.springframework.cloud.netflix.ribbon.ServerIntrospector;
+
 import com.netflix.client.RequestSpecificRetryHandler;
 import com.netflix.client.RetryHandler;
 import com.netflix.client.config.IClientConfig;
-import com.netflix.loadbalancer.Server;
 
 /**
  * An OK HTTP client which leverages Spring Retry to retry failed request.
  * @author Ryan Baxter
  * @author Gang Li
  */
-public class RetryableOkHttpLoadBalancingClient extends OkHttpLoadBalancingClient implements ServiceInstanceChooser {
+public class RetryableOkHttpLoadBalancingClient extends OkHttpLoadBalancingClient {
+	private static final Log LOGGER = LogFactory.getLog(RetryableOkHttpLoadBalancingClient.class);
 
-	private LoadBalancedRetryPolicyFactory loadBalancedRetryPolicyFactory;
-	private LoadBalancedBackOffPolicyFactory loadBalancedBackOffPolicyFactory =
-		new LoadBalancedBackOffPolicyFactory.NoBackOffPolicyFactory();
-	private LoadBalancedRetryListenerFactory loadBalancedRetryListenerFactory =
-		new LoadBalancedRetryListenerFactory.DefaultRetryListenerFactory();
-
-	@Deprecated
-	//TODO remove in 2.0.x
-	public RetryableOkHttpLoadBalancingClient(OkHttpClient delegate, IClientConfig config, ServerIntrospector serverIntrospector,
-									 LoadBalancedRetryPolicyFactory loadBalancedRetryPolicyFactory) {
-		super(delegate, config, serverIntrospector);
-		this.loadBalancedRetryPolicyFactory = loadBalancedRetryPolicyFactory;
-	}
-
-	@Deprecated
-	//TODO remove in 2.0.x
-	public RetryableOkHttpLoadBalancingClient(OkHttpClient delegate, IClientConfig config, ServerIntrospector serverIntrospector,
-											  LoadBalancedRetryPolicyFactory loadBalancedRetryPolicyFactory,
-											  LoadBalancedBackOffPolicyFactory loadBalancedBackOffPolicyFactory) {
-		super(delegate, config, serverIntrospector);
-		this.loadBalancedRetryPolicyFactory = loadBalancedRetryPolicyFactory;
-		this.loadBalancedBackOffPolicyFactory = loadBalancedBackOffPolicyFactory;
-	}
+	private LoadBalancedRetryFactory loadBalancedRetryFactory;
+	private RibbonLoadBalancerContext ribbonLoadBalancerContext;
 
 	public RetryableOkHttpLoadBalancingClient(OkHttpClient delegate, IClientConfig config, ServerIntrospector serverIntrospector,
-											  LoadBalancedRetryPolicyFactory loadBalancedRetryPolicyFactory,
-											  LoadBalancedBackOffPolicyFactory loadBalancedBackOffPolicyFactory,
-											  LoadBalancedRetryListenerFactory loadBalancedRetryListenerFactory) {
+											  LoadBalancedRetryFactory loadBalancedRetryPolicyFactory) {
 		super(delegate, config, serverIntrospector);
-		this.loadBalancedRetryPolicyFactory = loadBalancedRetryPolicyFactory;
-		this.loadBalancedBackOffPolicyFactory = loadBalancedBackOffPolicyFactory;
-		this.loadBalancedRetryListenerFactory = loadBalancedRetryListenerFactory;
+		this.loadBalancedRetryFactory = loadBalancedRetryPolicyFactory;
 	}
 
 	@Override
@@ -96,17 +73,19 @@ public class RetryableOkHttpLoadBalancingClient extends OkHttpLoadBalancingClien
 	}
 	
 	private boolean isRequestRetryable(ContextAwareRequest request) {
-		return request.getContext() == null ? true :
-			BooleanUtils.toBooleanDefaultIfNull(request.getContext().getRetryable(), true);
+	    if (request.getContext() == null || request.getContext().getRetryable() == null) {
+	    	return true;
+		}
+		return request.getContext().getRetryable();
 	}
 	
 	private OkHttpRibbonResponse executeWithRetry(OkHttpRibbonRequest request, LoadBalancedRetryPolicy retryPolicy,
 												  RetryCallback<OkHttpRibbonResponse, Exception> callback,
 												  RecoveryCallback<OkHttpRibbonResponse> recoveryCallback) throws Exception {
 		RetryTemplate retryTemplate = new RetryTemplate();
-		BackOffPolicy backOffPolicy = loadBalancedBackOffPolicyFactory.createBackOffPolicy(this.getClientName());
+		BackOffPolicy backOffPolicy = loadBalancedRetryFactory.createBackOffPolicy(this.getClientName());
 		retryTemplate.setBackOffPolicy(backOffPolicy == null ? new NoBackOffPolicy() : backOffPolicy);
-		RetryListener[] retryListeners = this.loadBalancedRetryListenerFactory.createRetryListeners(this.getClientName());
+		RetryListener[] retryListeners = this.loadBalancedRetryFactory.createRetryListeners(this.getClientName());
 		if (retryListeners != null && retryListeners.length != 0) {
 			retryTemplate.setListeners(retryListeners);
 		}
@@ -119,21 +98,28 @@ public class RetryableOkHttpLoadBalancingClient extends OkHttpLoadBalancingClien
 	@Override
 	public OkHttpRibbonResponse execute(final OkHttpRibbonRequest ribbonRequest,
 										final IClientConfig configOverride) throws Exception {
-		final LoadBalancedRetryPolicy retryPolicy = loadBalancedRetryPolicyFactory.create(this.getClientName(), this);
+		final LoadBalancedRetryPolicy retryPolicy = loadBalancedRetryFactory.createRetryPolicy(this.getClientName(), this);
 		RetryCallback<OkHttpRibbonResponse, Exception> retryCallback  = new RetryCallback<OkHttpRibbonResponse, Exception>() {
 			@Override
 			public OkHttpRibbonResponse doWithRetry(RetryContext context) throws Exception {
 				//on retries the policy will choose the server and set it in the context
 				//extract the server and update the request being made
 				OkHttpRibbonRequest newRequest = ribbonRequest;
+				RibbonStatsRecorder statsRecorder = null;
+				
 				if(context instanceof LoadBalancedRetryContext) {
 					ServiceInstance service = ((LoadBalancedRetryContext)context).getServiceInstance();
-					if(service != null) {
-						//Reconstruct the request URI using the host and port set in the retry context
-						newRequest = newRequest.withNewUri(new URI(service.getUri().getScheme(),
-								newRequest.getURI().getUserInfo(), service.getHost(), service.getPort(),
-								newRequest.getURI().getPath(), newRequest.getURI().getQuery(),
-								newRequest.getURI().getFragment()));
+					validateServiceInstance(service);
+					//Reconstruct the request URI using the host and port set in the retry context
+					newRequest = newRequest.withNewUri(new URI(service.getUri().getScheme(),
+							newRequest.getURI().getUserInfo(), service.getHost(), service.getPort(),
+							newRequest.getURI().getPath(), newRequest.getURI().getQuery(),
+							newRequest.getURI().getFragment()));
+					
+					if (ribbonLoadBalancerContext == null) {
+						LOGGER.error("RibbonLoadBalancerContext is null. Unable to update load balancer stats");
+					} else if (service instanceof RibbonServer) {
+						statsRecorder = new RibbonStatsRecorder(ribbonLoadBalancerContext, ((RibbonServer)service).getServer());
 					}
 				}
 				if (isSecure(configOverride)) {
@@ -151,10 +137,13 @@ public class RetryableOkHttpLoadBalancingClient extends OkHttpLoadBalancingClien
 					throw new OkHttpStatusCodeException(RetryableOkHttpLoadBalancingClient.this.clientName,
 							response, responseBody, newRequest.getURI());
 				}
+				if (statsRecorder != null) {
+					statsRecorder.recordStats(response);
+				}
 				return new OkHttpRibbonResponse(response, newRequest.getUri());
 			}
 		};
-		return this.executeWithRetry(ribbonRequest, retryPolicy, retryCallback, new RibbonRecoveryCallback<OkHttpRibbonResponse, Response>(){
+		return this.executeWithRetry(ribbonRequest, retryPolicy, retryCallback, new LoadBalancedRecoveryCallback<OkHttpRibbonResponse, Response>(){
 
 			@Override
 			protected OkHttpRibbonResponse createResponse(Response response, URI uri) {
@@ -164,15 +153,12 @@ public class RetryableOkHttpLoadBalancingClient extends OkHttpLoadBalancingClien
 	}
 
 	@Override
-	public ServiceInstance choose(String serviceId) {
-		Server server = this.getLoadBalancer().chooseServer(serviceId);
-		return new RibbonLoadBalancerClient.RibbonServer(serviceId,
-				server);
-	}
-
-	@Override
 	public RequestSpecificRetryHandler getRequestSpecificRetryHandler(OkHttpRibbonRequest request, IClientConfig requestConfig) {
 		return new RequestSpecificRetryHandler(false, false, RetryHandler.DEFAULT, null);
+	}
+	
+	public void setRibbonLoadBalancerContext(RibbonLoadBalancerContext ribbonLoadBalancerContext) {
+		this.ribbonLoadBalancerContext = ribbonLoadBalancerContext;
 	}
 
 	static class RetryPolicy extends InterceptorRetryPolicy {
