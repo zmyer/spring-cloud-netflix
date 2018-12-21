@@ -41,6 +41,7 @@ import org.springframework.cloud.test.ModifiedClassPathRunner;
 import org.springframework.mock.web.MockHttpServletRequest;
 import org.springframework.util.MultiValueMap;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
@@ -327,6 +328,22 @@ public class PreDecorationFilterTests {
 				ctx.getZuulRequestHeaders().get("x-forwarded-prefix"));
 		assertEquals("foo",
 				getHeader(ctx.getOriginResponseHeaders(), "x-zuul-serviceid"));
+	}
+
+	@Test
+	public void dontDecodeUrl() {
+		this.properties.setPrefix("/api");
+		this.properties.setStripPrefix(true);
+		this.properties.setDecodeUrl(false);
+		this.request.setRequestURI("/api/foo/encoded%2Fpath");
+		this.request.setContextPath("/context-path");
+		this.routeLocator.addRoute(
+				new ZuulRoute("foo", "/foo/**", "foo", null, false, null, null));
+		this.filter = new PreDecorationFilter(this.routeLocator, "/", this.properties,
+				this.proxyRequestHelper);
+		this.filter.run();
+		RequestContext ctx = RequestContext.getCurrentContext();
+		assertEquals("/foo/encoded%2Fpath", ctx.get(REQUEST_URI_KEY));
 	}
 
 	@Test
@@ -624,22 +641,31 @@ public class PreDecorationFilterTests {
 		assertTrue(decodedRequestURI.equals("/oléדרעק"));
 	}
 
-  @Test
-  public void headersAreProperlyIgnored() throws Exception {
-    proxyRequestHelper.addIgnoredHeaders("x-forwarded-host", "x-forwarded-port");
-    request.addHeader("x-forwarded-host", "B,127.0.0.1:8080");
-    request.addHeader("x-forwarded-port", "A,8080");
-    request.addHeader("x-forwarded-proto", "C,http");
+	@Test
+	public void headersAreProperlyIgnored() throws Exception {
+		proxyRequestHelper.addIgnoredHeaders("x-forwarded-host", "x-forwarded-port");
+		request.addHeader("x-forwarded-host", "B,127.0.0.1:8080");
+		request.addHeader("x-forwarded-port", "A,8080");
+		request.addHeader("x-forwarded-proto", "C,http");
 
-    MultiValueMap<String, String> result = proxyRequestHelper
-            .buildZuulRequestHeaders(request);
+		MultiValueMap<String, String> result = proxyRequestHelper
+				.buildZuulRequestHeaders(request);
 
-    assertTrue(result.containsKey("x-forwarded-proto"));
-    assertFalse(result.containsKey("x-forwarded-host"));
-    assertFalse(result.containsKey("x-forwarded-port"));
-  }
+		assertTrue(result.containsKey("x-forwarded-proto"));
+		assertFalse(result.containsKey("x-forwarded-host"));
+		assertFalse(result.containsKey("x-forwarded-port"));
+	}
 
-  private Object getHeader(List<Pair<String, String>> headers, String key) {
+	@Test
+	public void nullDispatcherServletPath() {
+		this.filter = new PreDecorationFilter(this.routeLocator, null, this.properties,
+				this.proxyRequestHelper);
+
+		String forwardUri = this.filter.getForwardUri("/mypath");
+		assertThat(forwardUri).isEqualTo("/mypath");
+	}
+
+	private Object getHeader(List<Pair<String, String>> headers, String key) {
 		String value = null;
 		for (Pair<String, String> pair : headers) {
 			if (pair.first().toLowerCase().equals(key.toLowerCase())) {

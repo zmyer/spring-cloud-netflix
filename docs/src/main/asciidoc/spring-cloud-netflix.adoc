@@ -335,6 +335,16 @@ This section describes how to set up a Eureka server.
 To include Eureka Server in your project, use the starter with a group ID of `org.springframework.cloud` and an artifact ID of `spring-cloud-starter-netflix-eureka-server`.
 See the http://projects.spring.io/spring-cloud/[Spring Cloud Project page] for details on setting up your build system with the current Spring Cloud Release Train.
 
+NOTE: If your project already uses Thymeleaf as its template engine, the Freemarker templates of the Eureka server may not be loaded correctly. In this case it is necessary to configure the template loader manually:
+
+.application.yml
+----
+spring:
+  freemarker:
+    template-loader-path: classpath:/templates/
+    prefer-file-system-access: false
+----
+
 [[spring-cloud-running-eureka-server]]
 === How to Run a Eureka Server
 
@@ -523,6 +533,30 @@ class WebSecurityConfig extends WebSecurityConfigurerAdapter {
 For more information on CSRF see the https://docs.spring.io/spring-security/site/docs/current/reference/htmlsingle/#csrf[Spring Security documentation].
 
 A demo Eureka Server can be found in the Spring Cloud Samples https://github.com/spring-cloud-samples/eureka/tree/Eureka-With-Security[repo].
+
+=== JDK 11 Support
+
+The JAXB modules which the Eureka server depends upon were removed in JDK 11.  If you intend to use JDK 11
+when running a Eureka server you must include these dependencies in your POM or Gradle file.
+
+[source,xml,indent=0]
+----
+<dependency>
+    <groupId>javax.xml.bind</groupId>
+    <artifactId>jaxb-api</artifactId>
+    <version>2.3.0</version>
+</dependency>
+<dependency>
+    <groupId>com.sun.xml.bind</groupId>
+    <artifactId>jaxb-core</artifactId>
+    <version>2.3.0</version>
+</dependency>
+<dependency>
+    <groupId>com.sun.xml.bind</groupId>
+    <artifactId>jaxb-impl</artifactId>
+    <version>2.3.0</version>
+</dependency>
+----
 
 == Circuit Breaker: Hystrix Clients
 
@@ -736,7 +770,7 @@ turbine:
   clusterNameExpression: "'default'"
 ----
 
-Spring Cloud provides a `spring-cloud-starter-netflix-turbine` that has all the dependencies you need to get a Turbine server running. To ad Turnbine, create a Spring Boot application and annotate it with `@EnableTurbine`.
+Spring Cloud provides a `spring-cloud-starter-netflix-turbine` that has all the dependencies you need to get a Turbine server running. To add Turbine, create a Spring Boot application and annotate it with `@EnableTurbine`.
 
 NOTE: By default, Spring Cloud lets Turbine use the host and port to allow multiple processes per host, per cluster.
 If you want the native Netflix behavior built into Turbine to _not_ allow multiple processes per host, per cluster (the key to the instance ID is the hostname), set `turbine.combineHostPort=false`.
@@ -1481,6 +1515,22 @@ NOTE: This special flag works only with `SimpleHostRoutingFilter`. Also, you loo
 query parameters with `RequestContext.getCurrentContext().setRequestQueryParams(someOverriddenParameters)`, because
 the query string is now fetched directly on the original `HttpServletRequest`.
 
+=== Request URI Encoding
+When processing the incoming request, request URI is decoded before matching them to routes.
+The request URI is then re-encoded when the back end request is rebuilt in the route filters.
+This can cause some unexpected behavior if your URI includes the encoded "/" character.
+
+To use the original request URI, it is possible to pass a special flag to 'ZuulProperties' so that the URI will be taken as is with the `HttpServletRequest::getRequestURI` method, as shown in the following example:
+
+.application.yml
+[source,yaml]
+----
+ zuul:
+  decodeUrl: false
+----
+
+NOTE: If you are overriding request URI using `requestURI` RequestContext attribute and this flag is set to false, then the URL set in the request context will not be encoded. It will be your responsibility to make sure the URL is already encoded. 
+
 === Plain Embedded Zuul
 
 If you use `@EnableZuulServer` (instead of `@EnableZuulProxy`), you can also run a Zuul server without proxying or selectively switch on parts of the proxying platform.
@@ -2111,3 +2161,27 @@ are using the Apache Http Cient or `OkHttpClient` if you are using OK HTTP.
 NOTE: When you create your own HTTP client, you are also responsible for implementing the correct connection management strategies for these clients.
 Doing so improperly can result in resource management issues.
 // TODO Can we provide a link to how to do so?
+
+== Modules In Maintenance Mode
+
+Placing a module in maintenance mode means that the Spring Cloud team will no longer be adding new features to the module.
+We will fix blocker bugs and security issues, and we will also consider and review small pull requests from the community.
+
+We intend to continue to support these modules for a period of at least a year from the general availability
+of the Greenwich release train.
+
+The following Spring Cloud Netflix modules and corresponding starters will be placed into maintenance mode:
+
+* spring-cloud-netflix-archaius
+* spring-cloud-netflix-hystrix-contract
+* spring-cloud-netflix-hystrix-dashboard
+* spring-cloud-netflix-hystrix-stream
+* spring-cloud-netflix-hystrix
+* spring-cloud-netflix-ribbon
+* spring-cloud-netflix-turbine-stream
+* spring-cloud-netflix-turbine
+* spring-cloud-netflix-zuul
+
+NOTE: This does not include the Eureka or concurrency-limits modules.
+
+
