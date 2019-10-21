@@ -1,11 +1,11 @@
 /*
- * Copyright 2013-2015 the original author or authors.
+ * Copyright 2013-2019 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- *      http://www.apache.org/licenses/LICENSE-2.0
+ *      https://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -18,11 +18,11 @@ package org.springframework.cloud.netflix.ribbon.eureka;
 
 import java.util.Map;
 
-import org.springframework.cloud.netflix.ribbon.DefaultServerIntrospector;
-
 import com.netflix.appinfo.InstanceInfo;
 import com.netflix.loadbalancer.Server;
 import com.netflix.niws.loadbalancer.DiscoveryEnabledServer;
+
+import org.springframework.cloud.netflix.ribbon.DefaultServerIntrospector;
 
 /**
  * @author Spencer Gibb
@@ -33,7 +33,8 @@ public class EurekaServerIntrospector extends DefaultServerIntrospector {
 	public boolean isSecure(Server server) {
 		if (server instanceof DiscoveryEnabledServer) {
 			DiscoveryEnabledServer discoveryServer = (DiscoveryEnabledServer) server;
-			return discoveryServer.getInstanceInfo().isPortEnabled(InstanceInfo.PortType.SECURE);
+			return discoveryServer.getInstanceInfo()
+					.isPortEnabled(InstanceInfo.PortType.SECURE);
 		}
 		return super.isSecure(server);
 	}
@@ -46,4 +47,5 @@ public class EurekaServerIntrospector extends DefaultServerIntrospector {
 		}
 		return super.getMetadata(server);
 	}
+
 }

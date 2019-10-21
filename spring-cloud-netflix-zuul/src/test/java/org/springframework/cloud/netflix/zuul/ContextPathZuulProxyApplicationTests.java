@@ -1,26 +1,27 @@
 /*
- * Copyright 2013-2018 the original author or authors.
+ * Copyright 2013-2019 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- *      http://www.apache.org/licenses/LICENSE-2.0
+ *      https://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- *
  */
 
 package org.springframework.cloud.netflix.zuul;
 
+import com.netflix.zuul.context.RequestContext;
 import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
+
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.autoconfigure.EnableAutoConfiguration;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -43,13 +44,13 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestMethod;
 import org.springframework.web.bind.annotation.RestController;
 
-import com.netflix.zuul.context.RequestContext;
-
-import static org.junit.Assert.assertEquals;
+import static org.assertj.core.api.Assertions.assertThat;
 
 @RunWith(SpringJUnit4ClassRunner.class)
-@SpringBootTest(classes = ContextPathZuulProxyApplicationTests.ContextPathZuulProxyApplication.class, webEnvironment = WebEnvironment.RANDOM_PORT, value = {
-		"server.servlet.contextPath: /app" })
+@SpringBootTest(
+		classes = ContextPathZuulProxyApplicationTests.ContextPathZuulProxyApplication.class,
+		webEnvironment = WebEnvironment.RANDOM_PORT,
+		value = { "server.servlet.contextPath: /app" })
 @DirtiesContext
 public class ContextPathZuulProxyApplicationTests {
 
@@ -83,8 +84,8 @@ public class ContextPathZuulProxyApplicationTests {
 		ResponseEntity<String> result = testRestTemplate.exchange(
 				"http://localhost:" + this.port + "/app/self/1", HttpMethod.GET,
 				new HttpEntity<>((Void) null), String.class);
-		assertEquals(HttpStatus.OK, result.getStatusCode());
-		assertEquals("Gotten 1!", result.getBody());
+		assertThat(result.getStatusCode()).isEqualTo(HttpStatus.OK);
+		assertThat(result.getBody()).isEqualTo("Gotten 1!");
 	}
 
 	@Test
@@ -95,11 +96,10 @@ public class ContextPathZuulProxyApplicationTests {
 		ResponseEntity<String> result = testRestTemplate.exchange(
 				"http://localhost:" + this.port + "/app/strip", HttpMethod.GET,
 				new HttpEntity<>((Void) null), String.class);
-		assertEquals(HttpStatus.OK, result.getStatusCode());
+		assertThat(result.getStatusCode()).isEqualTo(HttpStatus.OK);
 		// Prefix not stripped to it goes to /local/strip
-		assertEquals("Gotten strip!", result.getBody());
+		assertThat(result.getBody()).isEqualTo("Gotten strip!");
 	}
-
 
 	// Don't use @SpringBootApplication because we don't want to component scan
 	@Configuration
@@ -115,4 +115,5 @@ public class ContextPathZuulProxyApplicationTests {
 		}
 
 	}
+
 }

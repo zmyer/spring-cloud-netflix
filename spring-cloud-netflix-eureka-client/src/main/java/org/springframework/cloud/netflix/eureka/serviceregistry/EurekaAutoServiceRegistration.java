@@ -5,14 +5,13 @@
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- *      http://www.apache.org/licenses/LICENSE-2.0
+ *      https://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- *
  */
 
 package org.springframework.cloud.netflix.eureka.serviceregistry;
@@ -38,9 +37,10 @@ import org.springframework.core.Ordered;
  * @author Spencer Gibb
  * @author Jon Schneider
  * @author Jakub Narloch
- * @author raiyan
+ * @author Raiyan Raiyan
  */
-public class EurekaAutoServiceRegistration implements AutoServiceRegistration, SmartLifecycle, Ordered, SmartApplicationListener {
+public class EurekaAutoServiceRegistration implements AutoServiceRegistration,
+		SmartLifecycle, Ordered, SmartApplicationListener {
 
 	private static final Log log = LogFactory.getLog(EurekaAutoServiceRegistration.class);
 
@@ -56,7 +56,8 @@ public class EurekaAutoServiceRegistration implements AutoServiceRegistration, S
 
 	private EurekaRegistration registration;
 
-	public EurekaAutoServiceRegistration(ApplicationContext context, EurekaServiceRegistry serviceRegistry, EurekaRegistration registration) {
+	public EurekaAutoServiceRegistration(ApplicationContext context,
+			EurekaServiceRegistry serviceRegistry, EurekaRegistration registration) {
 		this.context = context;
 		this.serviceRegistry = serviceRegistry;
 		this.registration = registration;
@@ -81,11 +82,12 @@ public class EurekaAutoServiceRegistration implements AutoServiceRegistration, S
 
 			this.serviceRegistry.register(this.registration);
 
-			this.context.publishEvent(
-					new InstanceRegisteredEvent<>(this, this.registration.getInstanceConfig()));
+			this.context.publishEvent(new InstanceRegisteredEvent<>(this,
+					this.registration.getInstanceConfig()));
 			this.running.set(true);
 		}
 	}
+
 	@Override
 	public void stop() {
 		this.serviceRegistry.deregister(this.registration);
@@ -118,7 +120,6 @@ public class EurekaAutoServiceRegistration implements AutoServiceRegistration, S
 		return this.order;
 	}
 
-
 	@Override
 	public boolean supportsEventType(Class<? extends ApplicationEvent> eventType) {
 		return WebServerInitializedEvent.class.isAssignableFrom(eventType)
@@ -129,23 +130,27 @@ public class EurekaAutoServiceRegistration implements AutoServiceRegistration, S
 	public void onApplicationEvent(ApplicationEvent event) {
 		if (event instanceof WebServerInitializedEvent) {
 			onApplicationEvent((WebServerInitializedEvent) event);
-		} else if (event instanceof ContextClosedEvent) {
+		}
+		else if (event instanceof ContextClosedEvent) {
 			onApplicationEvent((ContextClosedEvent) event);
 		}
 	}
 
 	public void onApplicationEvent(WebServerInitializedEvent event) {
 		// TODO: take SSL into account
-		int localPort = event.getWebServer().getPort();
-		if (this.port.get() == 0) {
-			log.info("Updating port to " + localPort);
-			this.port.compareAndSet(0, localPort);
-			start();
+		String contextName = event.getApplicationContext().getServerNamespace();
+		if (contextName == null || !contextName.equals("management")) {
+			int localPort = event.getWebServer().getPort();
+			if (this.port.get() == 0) {
+				log.info("Updating port to " + localPort);
+				this.port.compareAndSet(0, localPort);
+				start();
+			}
 		}
 	}
 
 	public void onApplicationEvent(ContextClosedEvent event) {
-		if( event.getApplicationContext() == context ) {
+		if (event.getApplicationContext() == context) {
 			stop();
 		}
 	}

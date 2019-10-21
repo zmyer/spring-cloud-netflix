@@ -1,11 +1,11 @@
 /*
- * Copyright 2013-2015 the original author or authors.
+ * Copyright 2013-2019 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- *      http://www.apache.org/licenses/LICENSE-2.0
+ *      https://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -19,11 +19,14 @@ package org.springframework.cloud.netflix.ribbon;
 import java.io.IOException;
 import java.net.URI;
 import java.net.URL;
+
+import com.netflix.loadbalancer.Server;
 import org.junit.Before;
 import org.junit.Test;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.MockitoAnnotations;
+
 import org.springframework.cloud.client.ServiceInstance;
 import org.springframework.cloud.client.loadbalancer.LoadBalancerClient;
 import org.springframework.cloud.client.loadbalancer.LoadBalancerInterceptor;
@@ -35,10 +38,8 @@ import org.springframework.http.client.ClientHttpResponse;
 import org.springframework.http.client.support.HttpRequestWrapper;
 import org.springframework.util.ReflectionUtils;
 import org.springframework.web.util.UriComponentsBuilder;
-import com.netflix.loadbalancer.Server;
 
-import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertNotNull;
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.BDDMockito.given;
 import static org.mockito.Matchers.isA;
 import static org.mockito.Mockito.verify;
@@ -65,19 +66,20 @@ public class RibbonInterceptorTests {
 	@Test
 	public void testIntercept() throws Exception {
 		RibbonServer server = new RibbonServer("myservice", new Server("myhost", 8080));
-		LoadBalancerInterceptor interceptor = new LoadBalancerInterceptor(new MyClient(server));
-		given(this.request.getURI()).willReturn(new URL("http://myservice").toURI());
+		LoadBalancerInterceptor interceptor = new LoadBalancerInterceptor(
+				new MyClient(server));
+		given(this.request.getURI()).willReturn(new URL("https://myservice").toURI());
 		given(this.execution.execute(isA(HttpRequest.class), isA(byte[].class)))
 				.willReturn(this.response);
 		ArgumentCaptor<HttpRequestWrapper> argument = ArgumentCaptor
 				.forClass(HttpRequestWrapper.class);
 		ClientHttpResponse response = interceptor.intercept(this.request, new byte[0],
 				this.execution);
-		assertNotNull("response was null", response);
+		assertThat(response).as("response was null").isNotNull();
 		verify(this.execution).execute(argument.capture(), isA(byte[].class));
 		HttpRequestWrapper wrapper = argument.getValue();
-		assertEquals("wrong constructed uri", new URL("http://myhost:8080").toURI(),
-				wrapper.getURI());
+		assertThat(wrapper.getURI()).as("wrong constructed uri")
+				.isEqualTo(new URL("https://myhost:8080").toURI());
 	}
 
 	protected static class MyClient implements LoadBalancerClient {
@@ -105,7 +107,8 @@ public class RibbonInterceptorTests {
 		}
 
 		@Override
-		public <T> T execute(String s, ServiceInstance serviceInstance, LoadBalancerRequest<T> request) throws IOException {
+		public <T> T execute(String s, ServiceInstance serviceInstance,
+				LoadBalancerRequest<T> request) throws IOException {
 			try {
 				return request.apply(this.instance);
 			}

@@ -1,18 +1,17 @@
 /*
- * Copyright 2013-2018 the original author or authors.
+ * Copyright 2013-2019 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- *      http://www.apache.org/licenses/LICENSE-2.0
+ *      https://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- *
  */
 
 package org.springframework.cloud.netflix.zuul.filters;
@@ -66,12 +65,13 @@ import org.springframework.web.client.RestTemplate;
 
 import static junit.framework.TestCase.assertFalse;
 import static junit.framework.TestCase.assertTrue;
-import static org.junit.Assert.assertEquals;
+import static org.assertj.core.api.Assertions.assertThat;
 
 @RunWith(SpringJUnit4ClassRunner.class)
-@SpringBootTest(classes = CustomHostRoutingFilterTests.SampleCustomZuulProxyApplication.class,
-		webEnvironment = WebEnvironment.RANDOM_PORT, properties = {
-		"server.servlet.context-path: /app" })
+@SpringBootTest(
+		classes = CustomHostRoutingFilterTests.SampleCustomZuulProxyApplication.class,
+		webEnvironment = WebEnvironment.RANDOM_PORT,
+		properties = { "server.servlet.context-path: /app" })
 @DirtiesContext
 public class CustomHostRoutingFilterTests {
 
@@ -101,8 +101,8 @@ public class CustomHostRoutingFilterTests {
 		this.endpoint.reset();
 		ResponseEntity<String> result = new TestRestTemplate().getForEntity(
 				"http://localhost:" + this.port + "/app/self/get/1", String.class);
-		assertEquals(HttpStatus.OK, result.getStatusCode());
-		assertEquals("Get 1", result.getBody());
+		assertThat(result.getStatusCode()).isEqualTo(HttpStatus.OK);
+		assertThat(result.getBody()).isEqualTo("Get 1");
 	}
 
 	@Test
@@ -113,8 +113,8 @@ public class CustomHostRoutingFilterTests {
 		params.add("id", "2");
 		ResponseEntity<String> result = new TestRestTemplate().postForEntity(
 				"http://localhost:" + this.port + "/app/self/post", params, String.class);
-		assertEquals(HttpStatus.OK, result.getStatusCode());
-		assertEquals("Post 2", result.getBody());
+		assertThat(result.getStatusCode()).isEqualTo(HttpStatus.OK);
+		assertThat(result.getBody()).isEqualTo("Post 2");
 	}
 
 	@Test
@@ -124,8 +124,8 @@ public class CustomHostRoutingFilterTests {
 		ResponseEntity<String> result = new TestRestTemplate().exchange(
 				"http://localhost:" + this.port + "/app/self/put/3", HttpMethod.PUT,
 				new HttpEntity<>((Void) null), String.class);
-		assertEquals(HttpStatus.OK, result.getStatusCode());
-		assertEquals("Put 3", result.getBody());
+		assertThat(result.getStatusCode()).isEqualTo(HttpStatus.OK);
+		assertThat(result.getBody()).isEqualTo("Put 3");
 	}
 
 	@Test
@@ -137,8 +137,8 @@ public class CustomHostRoutingFilterTests {
 		ResponseEntity<String> result = new TestRestTemplate().exchange(
 				"http://localhost:" + this.port + "/app/self/patch/4", HttpMethod.PATCH,
 				new HttpEntity<>(params), String.class);
-		assertEquals(HttpStatus.OK, result.getStatusCode());
-		assertEquals("Patch 45", result.getBody());
+		assertThat(result.getStatusCode()).isEqualTo(HttpStatus.OK);
+		assertThat(result.getBody()).isEqualTo("Patch 45");
 	}
 
 	@Test
@@ -147,7 +147,7 @@ public class CustomHostRoutingFilterTests {
 		this.endpoint.reset();
 		ResponseEntity<String> result = new TestRestTemplate().getForEntity(
 				"http://localhost:" + this.port + "/app/self/get/1", String.class);
-		assertEquals(HttpStatus.OK, result.getStatusCode());
+		assertThat(result.getStatusCode()).isEqualTo(HttpStatus.OK);
 		assertTrue(result.getHeaders().containsKey("X-NotIgnored"));
 		assertFalse(result.getHeaders().containsKey("X-Ignored"));
 	}
@@ -165,10 +165,9 @@ public class CustomHostRoutingFilterTests {
 		ResponseEntity<String> result2 = restTemplate.getForEntity(
 				"http://localhost:" + this.port + "/app/self/cookie/2", String.class);
 
-		assertEquals("SetCookie 1", result1.getBody());
-		assertEquals("GetCookie 1", result2.getBody());
+		assertThat(result1.getBody()).isEqualTo("SetCookie 1");
+		assertThat(result2.getBody()).isEqualTo("GetCookie 1");
 	}
-
 
 	@Configuration
 	@EnableAutoConfiguration
@@ -204,7 +203,8 @@ public class CustomHostRoutingFilterTests {
 		}
 
 		@RequestMapping(value = "/patch/{id}", method = RequestMethod.PATCH)
-		public String patch(@PathVariable String id, @RequestParam("patch") String patch) {
+		public String patch(@PathVariable String id,
+				@RequestParam("patch") String patch) {
 			return "Patch " + id + patch;
 		}
 
@@ -217,28 +217,30 @@ public class CustomHostRoutingFilterTests {
 		protected static class CustomZuulProxyConfig {
 
 			@Bean
-			public ApacheHttpClientFactory customHttpClientFactory(HttpClientBuilder builder) {
+			public ApacheHttpClientFactory customHttpClientFactory(
+					HttpClientBuilder builder) {
 				return new CustomApacheHttpClientFactory(builder);
 			}
 
 			@Bean
 			public CloseableHttpClient closeableClient() {
-				return HttpClients.custom()
-						.setDefaultCookieStore(new BasicCookieStore())
+				return HttpClients.custom().setDefaultCookieStore(new BasicCookieStore())
 						.setDefaultRequestConfig(RequestConfig.custom()
 								.setCookieSpec(CookieSpecs.DEFAULT).build())
 						.build();
 			}
 
 			@Bean
-			public SimpleHostRoutingFilter simpleHostRoutingFilter(ProxyRequestHelper helper,
-																   ZuulProperties zuulProperties, CloseableHttpClient httpClient) {
+			public SimpleHostRoutingFilter simpleHostRoutingFilter(
+					ProxyRequestHelper helper, ZuulProperties zuulProperties,
+					CloseableHttpClient httpClient) {
 				return new CustomHostRoutingFilter(helper, zuulProperties, httpClient);
 			}
 
 			private class CustomHostRoutingFilter extends SimpleHostRoutingFilter {
-				public CustomHostRoutingFilter(ProxyRequestHelper helper,
-											   ZuulProperties zuulProperties, CloseableHttpClient httpClient) {
+
+				CustomHostRoutingFilter(ProxyRequestHelper helper,
+						ZuulProperties zuulProperties, CloseableHttpClient httpClient) {
 					super(helper, zuulProperties, httpClient);
 				}
 
@@ -247,15 +249,20 @@ public class CustomHostRoutingFilterTests {
 					super.addIgnoredHeaders("X-Ignored");
 					return super.run();
 				}
+
 			}
 
+			private class CustomApacheHttpClientFactory
+					extends DefaultApacheHttpClientFactory {
 
-			private class CustomApacheHttpClientFactory extends DefaultApacheHttpClientFactory {
-				public CustomApacheHttpClientFactory(HttpClientBuilder builder) {
+				CustomApacheHttpClientFactory(HttpClientBuilder builder) {
 					super(builder);
 				}
+
 			}
+
 		}
 
 	}
+
 }

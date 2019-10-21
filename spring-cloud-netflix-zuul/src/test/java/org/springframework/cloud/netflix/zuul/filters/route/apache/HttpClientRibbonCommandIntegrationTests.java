@@ -1,26 +1,20 @@
 /*
- * Copyright 2013-2018 the original author or authors.
+ * Copyright 2013-2019 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- *      http://www.apache.org/licenses/LICENSE-2.0
+ *      https://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
  * See the License for the specific language governing permissions and
  * limitations under the License.
- *
  */
 
 package org.springframework.cloud.netflix.zuul.filters.route.apache;
-
-import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertNull;
-import static org.junit.Assert.assertTrue;
-import static org.springframework.http.HttpHeaders.SET_COOKIE;
 
 import java.util.Collections;
 import java.util.Set;
@@ -29,9 +23,15 @@ import javax.servlet.http.Cookie;
 import javax.servlet.http.HttpServletRequest;
 import javax.servlet.http.HttpServletResponse;
 
+import com.netflix.client.RetryHandler;
+import com.netflix.client.config.IClientConfig;
+import com.netflix.loadbalancer.ILoadBalancer;
+import com.netflix.loadbalancer.Server;
+import com.netflix.loadbalancer.ServerList;
 import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
+
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.EnableAutoConfiguration;
@@ -67,22 +67,20 @@ import org.springframework.web.bind.annotation.RequestMethod;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.util.WebUtils;
 
-import com.netflix.client.RetryHandler;
-import com.netflix.client.config.IClientConfig;
-import com.netflix.loadbalancer.ILoadBalancer;
-import com.netflix.loadbalancer.Server;
-import com.netflix.loadbalancer.ServerList;
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.springframework.http.HttpHeaders.SET_COOKIE;
 
 /**
  * @author Spencer Gibb
  */
 @RunWith(SpringJUnit4ClassRunner.class)
-@SpringBootTest(classes = HttpClientRibbonCommandIntegrationTests.TestConfig.class, webEnvironment = WebEnvironment.RANDOM_PORT, value = {
-		"zuul.routes.other: /test/**=http://localhost:7777/local",
-		"zuul.routes.another: /another/twolevel/**", "zuul.routes.simple: /simple/**",
-		"zuul.routes.singleton.id: singleton",
-		"zuul.routes.singleton.path: /singleton/**",
-		"zuul.routes.singleton.sensitiveHeaders: " })
+@SpringBootTest(classes = HttpClientRibbonCommandIntegrationTests.TestConfig.class,
+		webEnvironment = WebEnvironment.RANDOM_PORT,
+		value = { "zuul.routes.other: /test/**=http://localhost:7777/local",
+				"zuul.routes.another: /another/twolevel/**",
+				"zuul.routes.simple: /simple/**", "zuul.routes.singleton.id: singleton",
+				"zuul.routes.singleton.path: /singleton/**",
+				"zuul.routes.singleton.sensitiveHeaders: " })
 @DirtiesContext
 public class HttpClientRibbonCommandIntegrationTests extends ZuulProxyTestBase {
 
@@ -96,8 +94,8 @@ public class HttpClientRibbonCommandIntegrationTests extends ZuulProxyTestBase {
 		ResponseEntity<String> result = new TestRestTemplate().exchange(
 				"http://localhost:" + this.port + "/simple/local/1", HttpMethod.PATCH,
 				new HttpEntity<>("TestPatch"), String.class);
-		assertEquals(HttpStatus.OK, result.getStatusCode());
-		assertEquals("Patched 1!", result.getBody());
+		assertThat(result.getStatusCode()).isEqualTo(HttpStatus.OK);
+		assertThat(result.getBody()).isEqualTo("Patched 1!");
 	}
 
 	@Test
@@ -105,8 +103,8 @@ public class HttpClientRibbonCommandIntegrationTests extends ZuulProxyTestBase {
 		ResponseEntity<String> result = new TestRestTemplate().exchange(
 				"http://localhost:" + this.port + "/simple/local/1", HttpMethod.POST,
 				new HttpEntity<>("TestPost"), String.class);
-		assertEquals(HttpStatus.OK, result.getStatusCode());
-		assertEquals("Posted 1!", result.getBody());
+		assertThat(result.getStatusCode()).isEqualTo(HttpStatus.OK);
+		assertThat(result.getBody()).isEqualTo("Posted 1!");
 	}
 
 	@Test
@@ -114,8 +112,8 @@ public class HttpClientRibbonCommandIntegrationTests extends ZuulProxyTestBase {
 		ResponseEntity<String> result = new TestRestTemplate().exchange(
 				"http://localhost:" + this.port + "/simple/local/1", HttpMethod.DELETE,
 				new HttpEntity<>((Void) null), String.class);
-		assertEquals(HttpStatus.OK, result.getStatusCode());
-		assertEquals("Deleted 1!", result.getBody());
+		assertThat(result.getStatusCode()).isEqualTo(HttpStatus.OK);
+		assertThat(result.getBody()).isEqualTo("Deleted 1!");
 	}
 
 	@Test
@@ -123,9 +121,9 @@ public class HttpClientRibbonCommandIntegrationTests extends ZuulProxyTestBase {
 		ResponseEntity<String> result = new TestRestTemplate().exchange(
 				"http://localhost:" + this.port + "/simple/downstream_cookie",
 				HttpMethod.POST, new HttpEntity<>((Void) null), String.class);
-		assertEquals(HttpStatus.OK, result.getStatusCode());
-		assertEquals("Cookie 434354454!", result.getBody());
-		assertNull(result.getHeaders().getFirst(SET_COOKIE));
+		assertThat(result.getStatusCode()).isEqualTo(HttpStatus.OK);
+		assertThat(result.getBody()).isEqualTo("Cookie 434354454!");
+		assertThat(result.getHeaders().getFirst(SET_COOKIE)).isNull();
 
 		// if new instance of RibbonLoadBalancingHttpClient is getting created every time
 		// and HttpClient is not reused then there are no concerns for the shared cookie
@@ -135,21 +133,22 @@ public class HttpClientRibbonCommandIntegrationTests extends ZuulProxyTestBase {
 		result = new TestRestTemplate().exchange(
 				"http://localhost:" + this.port + "/singleton/downstream_cookie",
 				HttpMethod.POST, new HttpEntity<>((Void) null), String.class);
-		assertEquals(HttpStatus.OK, result.getStatusCode());
-		assertEquals("Cookie 434354454!", result.getBody());
-		assertEquals("jsessionid=434354454", result.getHeaders().getFirst(SET_COOKIE));
+		assertThat(result.getStatusCode()).isEqualTo(HttpStatus.OK);
+		assertThat(result.getBody()).isEqualTo("Cookie 434354454!");
+		assertThat(result.getHeaders().getFirst(SET_COOKIE))
+				.isEqualTo("jsessionid=434354454");
 
 		result = new TestRestTemplate().exchange(
 				"http://localhost:" + this.port + "/singleton/downstream_cookie",
 				HttpMethod.GET, new HttpEntity<>((Void) null), String.class);
-		assertEquals(HttpStatus.OK, result.getStatusCode());
-		assertEquals("Cookie null!", result.getBody());
+		assertThat(result.getStatusCode()).isEqualTo(HttpStatus.OK);
+		assertThat(result.getBody()).isEqualTo("Cookie null!");
 	}
 
 	@Test
 	public void ribbonCommandFactoryOverridden() {
-		assertTrue("ribbonCommandFactory not a HttpClientRibbonCommandFactory",
-				this.ribbonCommandFactory instanceof HttpClientRibbonCommandFactory);
+		assertThat(this.ribbonCommandFactory instanceof HttpClientRibbonCommandFactory)
+				.as("ribbonCommandFactory not a HttpClientRibbonCommandFactory").isTrue();
 	}
 
 	// Don't use @SpringBootApplication because we don't want to component scan
@@ -157,10 +156,12 @@ public class HttpClientRibbonCommandIntegrationTests extends ZuulProxyTestBase {
 	@EnableAutoConfiguration
 	@RestController
 	@EnableZuulProxy
-	@RibbonClients({
-			@RibbonClient(name = "simple", configuration = ZuulProxyTestBase.SimpleRibbonClientConfiguration.class),
-			@RibbonClient(name = "another", configuration = ZuulProxyTestBase.AnotherRibbonClientConfiguration.class),
-			@RibbonClient(name = "singleton", configuration = SingletonRibbonClientConfiguration.class) })
+	@RibbonClients({ @RibbonClient(name = "simple",
+			configuration = ZuulProxyTestBase.SimpleRibbonClientConfiguration.class),
+			@RibbonClient(name = "another",
+					configuration = ZuulProxyTestBase.AnotherRibbonClientConfiguration.class),
+			@RibbonClient(name = "singleton",
+					configuration = SingletonRibbonClientConfiguration.class) })
 	@Import(NoSecurityConfiguration.class)
 	static class TestConfig extends ZuulProxyTestBase.AbstractZuulProxyApplication {
 
@@ -197,6 +198,7 @@ public class HttpClientRibbonCommandIntegrationTests extends ZuulProxyTestBase {
 				ErrorAttributes errorAttributes) {
 			return new ZuulProxyTestBase.MyErrorController(errorAttributes);
 		}
+
 	}
 
 	// Load balancer with fixed server list and defined ribbon rest client
@@ -214,12 +216,13 @@ public class HttpClientRibbonCommandIntegrationTests extends ZuulProxyTestBase {
 		@Bean
 		public RibbonLoadBalancingHttpClient ribbonClient(IClientConfig config,
 				ILoadBalancer loadBalancer, RetryHandler retryHandler) {
-			final RibbonLoadBalancingHttpClient client = new RibbonLoadBalancingHttpClient(config,
-					new DefaultServerIntrospector());
+			final RibbonLoadBalancingHttpClient client = new RibbonLoadBalancingHttpClient(
+					config, new DefaultServerIntrospector());
 			client.setLoadBalancer(loadBalancer);
 			client.setRetryHandler(retryHandler);
 			return client;
 		}
 
 	}
+
 }

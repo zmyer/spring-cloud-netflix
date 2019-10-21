@@ -1,11 +1,11 @@
 /*
- * Copyright 2017 the original author or authors.
+ * Copyright 2017-2019 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- *      http://www.apache.org/licenses/LICENSE-2.0
+ *      https://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -16,9 +16,10 @@
 
 package org.springframework.cloud.netflix.eureka.config;
 
-import org.junit.Assert;
+import com.netflix.discovery.DiscoveryClient.DiscoveryClientOptionalArgs;
 import org.junit.Test;
 import org.junit.runner.RunWith;
+
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.context.SpringBootTest.WebEnvironment;
@@ -26,20 +27,23 @@ import org.springframework.cloud.netflix.eureka.sample.EurekaSampleApplication;
 import org.springframework.test.annotation.DirtiesContext;
 import org.springframework.test.context.junit4.SpringJUnit4ClassRunner;
 
-import com.netflix.discovery.DiscoveryClient.DiscoveryClientOptionalArgs;
+import static org.assertj.core.api.Assertions.assertThat;
 
 /**
  * @author Daniel Lavoie
  */
 @DirtiesContext
 @RunWith(SpringJUnit4ClassRunner.class)
-@SpringBootTest(classes = EurekaSampleApplication.class, webEnvironment = WebEnvironment.RANDOM_PORT)
+@SpringBootTest(classes = EurekaSampleApplication.class,
+		webEnvironment = WebEnvironment.RANDOM_PORT)
 public class JerseyOptionalArgsConfigurationTest {
+
 	@Autowired
 	private DiscoveryClientOptionalArgs optionalArgs;
 
 	@Test
 	public void contextLoads() {
-		Assert.assertNotNull(optionalArgs);
+		assertThat(optionalArgs).isNotNull();
 	}
+
 }
